@@ -1,0 +1,30 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Build files
+dist/
+build/
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

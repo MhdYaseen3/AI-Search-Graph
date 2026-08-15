@@ -1,0 +1,8 @@
+"""Neo4j relationship types used in the knowledge graph."""
+
+HAS_SKILL = "HAS_SKILL"
+WORKED_ON = "WORKED_ON"
+USES_TECHNOLOGY = "USES_TECHNOLOGY"
+STUDIED_AT = "STUDIED_AT"
+PROJECT_USES = "PROJECT_USES"
+WORKED_AT = "WORKED_AT"

@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: #f5f3ff;
+  --color-brand-100: #ede9fe;
+  --color-brand-500: #8b5cf6;
+  --color-brand-600: #7c3aed;
+  --color-brand-700: #6d28d9;
+  --color-brand-800: #5b21b6;
+  --color-brand-900: #4c1d95;
+  --color-dark-bg: #090d16;
+  --color-dark-card: #121824;
+  --color-dark-border: #1e293b;
+}
+
+@layer base {
+  body {
+    background-color: #090d16;
+    color: #e2e8f0;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #090d16;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Glassmorphism styling */
+.glass-panel {
+  background: rgba(18, 24, 36, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.glass-panel-accent {
+  background: rgba(139, 92, 246, 0.05);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+}
+
+/* Soft ambient glows */
+.glow-purple {
+  box-shadow: 0 0 40px -10px rgba(139, 92, 246, 0.2);
+}
+
+.glow-blue {
+  box-shadow: 0 0 40px -10px rgba(59, 130, 246, 0.2);
+}
+
+.glow-green {
+  box-shadow: 0 0 40px -10px rgba(16, 185, 129, 0.15);
+}
+
+/* Force simulation node styles */
+.node-interactive {
+  transition: transform 0.2s ease, filter 0.2s ease;
+}
+.node-interactive:hover {
+  filter: brightness(1.2) drop-shadow(0 0 8px currentColor);
+  cursor: pointer;
+}
+
+/* Shimmer animation for loading states */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, #121824 25%, #1e293b 50%, #121824 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
