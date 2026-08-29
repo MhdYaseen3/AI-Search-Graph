@@ -38,14 +38,17 @@ export const CreateJobForm: React.FC<CreateJobFormProps> = ({
 
     if (name.startsWith('salary.')) {
       const salaryKey = name.split('.')[1] as keyof NonNullable<CreateJobInput['salary']>;
-      setFormData
-      (prev => ({
-        ...prev,
-        salary: {
-          ...prev.salary,
-          [salaryKey]: salaryKey === 'currency' ? value : (value ? parseFloat(value) : undefined)
-        }
-      }));
+      setFormData(prev => ({
+  ...prev,
+  salary: {
+    min: prev.salary?.min,
+    max: prev.salary?.max,
+    currency: prev.salary?.currency ?? 'USD',
+    ...(salaryKey === 'currency'
+      ? { currency: value }
+      : { [salaryKey]: value ? parseFloat(value) : undefined }),
+  },
+}));
     } else if (name === 'experience') {
       setFormData(prev => ({
         ...prev,

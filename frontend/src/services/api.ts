@@ -1,11 +1,86 @@
 import axios from 'axios';
-import type { Candidate, CandidateGraph, AISummaryReport, UploadResponse, Job, CreateJobInput } from '../types';
-// API client configuration
+import type {
+  Candidate,
+  CandidateGraph,
+  AISummaryReport,
+  UploadResponse,
+  Job,
+  CreateJobInput,
+  SearchApiResponse,
+  CandidateDetailApiResponse,
+} from '../types';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+const USE_REAL_API = import.meta.env.VITE_USE_REAL_API === 'true';
+
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '',
+  baseURL: API_BASE,
   headers: {
     'Content-Type': 'application/json',
   },
+});
+
+const mapDetailToCandidate = (detail: CandidateDetailApiResponse, matchScore = 0): Candidate => {
+  const latestExperience = detail.experiences[0];
+  return {
+    id: detail.id,
+    name: detail.full_name,
+    email: detail.email || '',
+    phone: detail.phone || '',
+    location: detail.location || 'Not specified',
+    currentRole: latestExperience?.role || 'Not specified',
+    currentCompany: latestExperience?.company || 'Not specified',
+    matchScore,
+    experienceYears: detail.experience_years,
+    skills: detail.skills,
+    technologies: detail.technologies,
+    projects: detail.projects,
+    summary: detail.summary || 'No summary available.',
+    experience: detail.experiences.map((exp) => ({
+      role: exp.role || 'Role not specified',
+      company: exp.company,
+      duration: `${exp.start_date || 'Unknown'} - ${exp.end_date || 'Present'}`,
+      description: exp.description || '',
+    })),
+    education: detail.education.map((edu) => ({
+      degree: edu.degree || 'Degree not specified',
+      school: edu.institution || 'Institution not specified',
+      year: '',
+    })),
+    relationshipCount:
+      detail.skills.length +
+      detail.technologies.length +
+      detail.projects.length +
+      detail.education.length +
+      detail.experiences.length,
+  };
+};
+
+const mapSearchResultToCandidate = (
+  result: SearchApiResponse['results'][number],
+): Candidate => ({
+  id: result.candidate_id,
+  name: result.full_name,
+  email: '',
+  phone: '',
+  location: 'Not specified',
+  currentRole: result.matched_skills[0] || 'Candidate',
+  currentCompany: '',
+  matchScore: Math.round(result.score * 100),
+  experienceYears: result.experience_years,
+  skills: result.matched_skills,
+  technologies: result.matched_technologies,
+  projects: result.matched_projects,
+  matchedSkills: result.matched_skills,
+  matchedTechnologies: result.matched_technologies,
+  matchedProjects: result.matched_projects,
+  summary: result.summary || 'No summary available.',
+  experience: [],
+  education: [],
+  relationshipCount:
+    result.matched_skills.length +
+    result.matched_technologies.length +
+    result.matched_projects.length,
 });
 
 // ==========================================
@@ -334,14 +409,41 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export const resumeService = {
   uploadResume: async (file: File): Promise<UploadResponse> => {
     try {
-      // If configured to use actual backend:
-      if (import.meta.env.VITE_USE_REAL_API === 'true') {
+      if (USE_REAL_API) {
         const formData = new FormData();
         formData.append('file', file);
-        const response = await api.post<UploadResponse>('/api/resumes/upload', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
+        const response = await api.post('/resumes/ingest', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
         });
-        return response.data;
+        const data = response.data;
+        const candidate = mapDetailToCandidate(
+          {
+            id: data.candidate_id,
+            full_name: data.full_name,
+            email: data.email,
+            phone: data.phone,
+            skills: data.skills,
+            technologies: data.technologies,
+            projects: data.projects,
+            education: data.education.map((institution: string) => ({
+              institution,
+            })),
+            experiences: [],
+            experience_years: undefined,
+          },
+          0,
+        );
+
+        return {
+          success: true,
+          message: data.message,
+          candidateId: data.candidate_id,
+          candidate,
+          logs: [
+            { timestamp: new Date().toISOString(), level: 'success', message: data.message },
+            { timestamp: new Date().toISOString(), level: 'info', message: `Linked ${data.relationship_count} graph nodes.` },
+          ],
+        };
       }
     } catch (err) {
       console.warn('Real backend error, falling back to mock upload...', err);
@@ -404,9 +506,11 @@ export const resumeService = {
 
   searchCandidates: async (query: string): Promise<Candidate[]> => {
     try {
-      if (import.meta.env.VITE_USE_REAL_API === 'true') {
-        const response = await api.get<Candidate[]>(`/api/search?q=${encodeURIComponent(query)}`);
-        return response.data;
+      if (USE_REAL_API) {
+        const response = await api.post<SearchApiResponse>('/search', null, {
+          params: { query },
+        });
+        return response.data.results.map(mapSearchResultToCandidate);
       }
     } catch (err) {
       console.warn('Real backend error, falling back to mock search...', err);
@@ -427,9 +531,9 @@ export const resumeService = {
 
   getCandidateById: async (id: string): Promise<Candidate> => {
     try {
-      if (import.meta.env.VITE_USE_REAL_API === 'true') {
-        const response = await api.get<Candidate>(`/api/candidates/${id}`);
-        return response.data;
+      if (USE_REAL_API) {
+        const response = await api.get<CandidateDetailApiResponse>(`/candidates/${id}/detail`);
+        return mapDetailToCandidate(response.data);
       }
     } catch (err) {
       console.warn(`Real backend error fetching candidate ${id}, falling back...`, err);
@@ -503,7 +607,7 @@ const mockJobs: Job[] = [
     salary: { min: 170000, max: 230000, currency: 'USD' },
     status: 'Active',
     createdAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date(),
+    updatedAt: new Date().toISOString(),
     postedBy: 'tech-recruiter@graphcv.io'
   },
   {
@@ -517,7 +621,7 @@ const mockJobs: Job[] = [
     salary: { min: 140000, max: 190000, currency: 'USD' },
     status: 'Active',
     createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date(),
+    updatedAt: new Date().toISOString(),
     postedBy: 'tech-recruiter@graphcv.io'
   },
   {
@@ -559,7 +663,7 @@ const mockJobs: Job[] = [
     salary: { min: 120000, max: 170000, currency: 'USD' },
     status: 'Active',
     createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date(),
+    updatedAt: new Date().toISOString(),
     postedBy: 'tech-recruiter@graphcv.io'
   }
 ];

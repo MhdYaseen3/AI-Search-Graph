@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.deps import get_candidate_service
+from app.api.deps import get_candidate_graph_service, get_candidate_service
 from app.schemas.candidate import (
     CandidateCreate,
     CandidateListResponse,
@@ -8,6 +8,8 @@ from app.schemas.candidate import (
     CandidateUpdate,
 )
 from app.schemas.common import MessageResponse
+from app.schemas.graph import CandidateDetailResponse, CandidateGraphResponse
+from app.services.candidate_graph import CandidateGraphService
 from app.services.candidate_management import CandidateManagementService
 
 router = APIRouter(
@@ -46,6 +48,22 @@ async def get_candidate(
 ) -> CandidateResponse:
     candidate = await service.get_by_id(candidate_id)
     return CandidateResponse.model_validate(candidate)
+
+
+@router.get("/{candidate_id}/detail", response_model=CandidateDetailResponse)
+async def get_candidate_detail(
+    candidate_id: str,
+    graph_service: CandidateGraphService = Depends(get_candidate_graph_service),
+) -> CandidateDetailResponse:
+    return await graph_service.get_candidate_detail(candidate_id)
+
+
+@router.get("/{candidate_id}/graph", response_model=CandidateGraphResponse)
+async def get_candidate_graph(
+    candidate_id: str,
+    graph_service: CandidateGraphService = Depends(get_candidate_graph_service),
+) -> CandidateGraphResponse:
+    return await graph_service.get_candidate_graph(candidate_id)
 
 
 @router.patch("/{candidate_id}", response_model=CandidateResponse)

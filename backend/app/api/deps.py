@@ -14,6 +14,7 @@ from app.services.pdf_extraction import PDFExtractionService
 from app.services.project_extraction import ProjectExtractionService
 from app.services.ranking import RankingService
 from app.services.resume_upload import ResumeUploadService
+from app.services.candidate_graph import CandidateGraphService
 from app.services.search import SearchService
 from app.services.skill_extraction import SkillExtractionService
 from app.services.technology_extraction import TechnologyExtractionService
@@ -23,6 +24,7 @@ from app.services.gmail_ingestion import GmailIngestionService
 from app.services.gmail_message_tracking import (
     GmailMessageTrackingService,
 )
+from app.services.resume_ingest import ResumeIngestService
 from app.services.query_parser import QueryParser
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -69,6 +71,10 @@ def get_project_extraction_service() -> ProjectExtractionService:
 
 def get_neo4j_graph_service(neo4j: Neo4jDep) -> Neo4jGraphService:
     return Neo4jGraphService(neo4j)
+
+
+def get_candidate_graph_service(neo4j: Neo4jDep) -> CandidateGraphService:
+    return CandidateGraphService(neo4j)
 
 
 def get_search_service(neo4j: Neo4jDep) -> SearchService:
@@ -142,3 +148,25 @@ def get_gmail_ingestion_service(
 
 def get_query_parser() -> QueryParser:
     return QueryParser()
+
+
+def get_resume_ingest_service(
+    neo4j: Neo4jDep,
+    upload_service: ResumeUploadService = Depends(get_resume_upload_service),
+    pdf_service: PDFExtractionService = Depends(get_pdf_extraction_service),
+    candidate_service: CandidateManagementService = Depends(get_candidate_service),
+    skill_service: SkillExtractionService = Depends(get_skill_extraction_service),
+    project_service: ProjectExtractionService = Depends(get_project_extraction_service),
+    education_service: EducationExtractionService = Depends(get_education_extraction_service),
+    technology_service: TechnologyExtractionService = Depends(get_technology_extraction_service),
+) -> ResumeIngestService:
+    return ResumeIngestService(
+        upload_service=upload_service,
+        pdf_service=pdf_service,
+        candidate_service=candidate_service,
+        graph_service=Neo4jGraphService(neo4j),
+        skill_service=skill_service,
+        project_service=project_service,
+        education_service=education_service,
+        technology_service=technology_service,
+    )

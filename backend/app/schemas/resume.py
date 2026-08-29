@@ -32,3 +32,18 @@ class ExtractedResumeData(BaseModel):
     experiences: list[dict] = Field(default_factory=list)
 
     technologies: list[str] = Field(default_factory=list)
+
+
+class ResumeIngestResponse(BaseModel):
+    candidate_id: str
+    full_name: str
+    email: str | None = None
+    phone: str | None = None
+    skills: list[str] = Field(default_factory=list)
+    technologies: list[str] = Field(default_factory=list)
+    projects: list[str] = Field(default_factory=list)
+    education: list[str] = Field(default_factory=list)
+    experiences: int = 0
+    relationship_count: int = 0
+    file_path: str
+    message: str

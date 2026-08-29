@@ -1,3 +1,5 @@
+// Frontend API types aligned with backend responses
+
 export interface Experience {
   role: string;
   company: string;
@@ -20,18 +22,24 @@ export interface Candidate {
   currentRole: string;
   currentCompany: string;
   matchScore: number;
+  experienceYears?: number;
   skills: string[];
+  technologies?: string[];
+  projects?: string[];
   summary: string;
   experience: Experience[];
   education: Education[];
   relationshipCount: number;
+  matchedSkills?: string[];
+  matchedTechnologies?: string[];
+  matchedProjects?: string[];
 }
 
 export interface GraphNode {
   id: string;
   label: string;
   type: 'candidate' | 'skill' | 'company' | 'institution' | 'project';
-  val?: number; // visual weight/size
+  val?: number;
   x?: number;
   y?: number;
   vx?: number;
@@ -41,9 +49,9 @@ export interface GraphNode {
 }
 
 export interface GraphLink {
-  source: string; // Node ID
-  target: string; // Node ID
-  type: string;   // 'HAS_SKILL' | 'WORKED_AT' | 'STUDIED_AT' | 'WORKED_ON' | 'COLLABORATED'
+  source: string;
+  target: string;
+  type: string;
 }
 
 export interface CandidateGraph {
@@ -63,6 +71,7 @@ export interface AISummaryReport {
   hiringRecommendation: 'Strong Hire' | 'Hire' | 'Neutral' | 'Pass';
   reasoning: string;
   suggestedInterviewQuestions: string[];
+  source?: string;
 }
 
 export interface UploadProgressLog {
@@ -79,6 +88,49 @@ export interface UploadResponse {
   logs: UploadProgressLog[];
 }
 
+export interface SearchResultItem {
+  candidate_id: string;
+  full_name: string;
+  score: number;
+  experience_years?: number;
+  matched_skills: string[];
+  matched_technologies: string[];
+  matched_projects: string[];
+  summary?: string;
+}
+
+export interface SearchApiResponse {
+  query: string;
+  total: number;
+  parsed_skills: string[];
+  parsed_technologies: string[];
+  parsed_projects: string[];
+  min_experience_years?: number;
+  results: SearchResultItem[];
+}
+
+export interface CandidateDetailApiResponse {
+  id: string;
+  full_name: string;
+  email?: string;
+  phone?: string;
+  location?: string;
+  summary?: string;
+  skills: string[];
+  technologies: string[];
+  projects: string[];
+  education: Array<{ institution?: string; degree?: string }>;
+  experiences: Array<{
+    id?: string;
+    company: string;
+    role?: string;
+    description?: string;
+    start_date?: string;
+    end_date?: string;
+  }>;
+  experience_years?: number;
+}
+
 export type JobStatus = 'Active' | 'Closed';
 export type EmploymentType = 'Full-time' | 'Part-time' | 'Contract' | 'Temporary' | 'Freelance';
 
@@ -87,7 +139,7 @@ export interface Job {
   title: string;
   description: string;
   requiredSkills: string[];
-  experience: number; // years
+  experience: number;
   location: string;
   employmentType: EmploymentType;
   salary?: {

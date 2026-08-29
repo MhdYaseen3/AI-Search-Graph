@@ -37,36 +37,40 @@ class QueryParser:
     }
 
     PROJECT_KEYWORDS = {
-    "ai graph search engine",
-    "task management",
-    "smart housing",
-}
+        "ai graph search engine",
+        "task management",
+        "smart housing",
+    }
 
     def parse(self, text: str, limit: int = 20) -> SearchQuery:
         text_lower = text.lower()
-    
+
         skills = self._find_matches(
             text_lower,
             self.SKILLS,
         )
-    
+
         technologies = self._find_matches(
             text_lower,
             self.TECHNOLOGIES,
         )
-    
+
         projects = self._find_projects(text_lower)
-    
+
+        min_experience_years = self._find_min_experience_years(
+            text_lower
+        )
+
         return SearchQuery(
             query=text,
             skills=normalize_entities(skills),
             technologies=normalize_entities(technologies),
             projects=normalize_entities(projects),
+            min_experience_years=min_experience_years,
             limit=limit,
         )
-
-    @staticmethod
     def _find_matches(
+        self,
         text: str,
         items: set[str],
     ) -> list[str]:
@@ -90,3 +94,21 @@ class QueryParser:
                 matches.append(project)
 
         return matches
+
+    def _find_min_experience_years(self, text: str) -> float | None:
+        """Extract minimum years of experience from a natural-language query."""
+        patterns = [
+            r"\b(\d+(?:\.\d+)?)\s*\+\s*years?\b",
+            r"\bat\s+least\s+(\d+(?:\.\d+)?)\s+years?\b",
+            r"\bminimum\s+(\d+(?:\.\d+)?)\s+years?\b",
+            r"\b(\d+(?:\.\d+)?)\s+years?\s+of\s+experience\b",
+            r"\b(\d+(?:\.\d+)?)\s+years?\s+experience\b",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+
+            if match:
+                return float(match.group(1))
+
+        return None

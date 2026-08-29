@@ -29,6 +29,7 @@ class RankingService:
                     candidate_id=candidate.get("candidate_id", ""),
                     full_name=candidate.get("full_name", ""),
                     score=score,
+                    experience_years=candidate.get("experience_years"),
                     matched_skills=candidate.get(
                         "matched_skills",
                         [],
@@ -41,13 +42,7 @@ class RankingService:
                         "matched_projects",
                         [],
                     ),
-                    projects=candidate.get(
-    "projects",
-    [],
-),
-                    summary=candidate.get(
-                        "summary",
-                    ),
+                    summary=candidate.get("summary"),
                 )
             )
 
@@ -59,19 +54,12 @@ class RankingService:
         candidate: dict[str, Any],
         query: SearchQuery,
     ) -> float:
-        """Compute weighted relevance score."""
-
-        matched_skills = len(
-            candidate.get("matched_skills", [])
-        )
-
+        """Compute weighted relevance score with dynamic weights."""
+        matched_skills = len(candidate.get("matched_skills", []))
         matched_technologies = len(
-            candidate.get("matched_technologies", [])
+            candidate.get("matched_technologies", []),
         )
-
-        matched_projects = len(
-            candidate.get("matched_projects", [])
-        )
+        matched_projects = len(candidate.get("matched_projects", []))
 
         requested_skills = len(query.skills)
         requested_technologies = len(query.technologies)
@@ -95,42 +83,57 @@ class RankingService:
             else 0.0
         )
 
-        query_score = self._query_relevance_score(
-            candidate,
-            query,
-        )
+        experience_score = self._experience_score(candidate, query)
+        query_score = self._query_relevance_score(candidate, query)
 
-        score = (
-            skill_score * 0.40
-            + technology_score * 0.25
-            + project_score * 0.20
-            + query_score * 0.15
-        )
-
-        return round(
-            min(score, 1.0),
-            2,
-        )
-    def _match_items(
-        self,
-        candidate_items: list[str],
-        query_items: list[str],
-    ) -> list[str]:
-        """Match query items against candidate items."""
-        candidate_normalized = {
-            normalize_entity(item)
-            for item in candidate_items
+        weights = {
+            "skills": 0.40 if requested_skills else 0.0,
+            "technologies": 0.25 if requested_technologies else 0.0,
+            "projects": 0.20 if requested_projects else 0.0,
+            "experience": 0.25 if query.min_experience_years else 0.0,
+            "query": 0.15,
         }
 
-        matched = []
+        weight_total = sum(weights.values())
+        if weight_total == 0:
+            weights["query"] = 1.0
+            weight_total = 1.0
 
-        for item in query_items:
-            normalized_query = normalize_entity(item)
+        score = (
+            skill_score * weights["skills"] / weight_total
+            + technology_score * weights["technologies"] / weight_total
+            + project_score * weights["projects"] / weight_total
+            + experience_score * weights["experience"] / weight_total
+            + query_score * weights["query"] / weight_total
+        )
 
-            if normalized_query in candidate_normalized:
-                matched.append(item)
+        return round(min(score, 1.0), 2)
 
-        return matched
+    def _experience_score(
+         self,
+         candidate: dict[str, Any],
+         query: SearchQuery,
+     ) -> float:
+         """Score experience relative to the requested minimum."""
+         if query.min_experience_years is None:
+             return 0.0
+
+         experience_years = candidate.get("experience_years") or 0.0
+         minimum_years = query.min_experience_years
+
+         if experience_years < minimum_years:
+             return 0.0
+
+         # Reward experience above the requested minimum,
+         # while keeping the score bounded.
+         excess_ratio = (
+             experience_years - minimum_years
+         ) / max(minimum_years, 1.0)
+
+         return min(
+             1.0,
+             0.5 + (0.5 * excess_ratio),
+         )
 
     def _query_relevance_score(
         self,
@@ -138,51 +141,42 @@ class RankingService:
         query: SearchQuery,
     ) -> float:
         """Calculate relevance between the natural-language query and candidate data."""
-
-        query_words = set(
+        query_words = {
             normalize_entity(word)
             for word in query.query.lower().split()
             if len(word) > 2
-        )
+        }
 
         if not query_words:
             return 0.0
 
-        candidate_text_parts = []
-
-        candidate_text_parts.extend(
-            candidate.get("skills", [])
-        )
-
-        candidate_text_parts.extend(
-            candidate.get("technologies", [])
-        )
-
-        candidate_text_parts.extend(
-            candidate.get("projects", [])
-        )
+        candidate_text_parts: list[str] = []
+        candidate_text_parts.extend(candidate.get("skills", []))
+        candidate_text_parts.extend(candidate.get("technologies", []))
+        candidate_text_parts.extend(candidate.get("projects", []))
 
         if candidate.get("summary"):
-            candidate_text_parts.append(
-                candidate["summary"]
-            )
+            candidate_text_parts.append(candidate["summary"])
+
+        for experience in candidate.get("experiences", []):
+            if experience.get("role"):
+                candidate_text_parts.append(experience["role"])
+            if experience.get("company"):
+                candidate_text_parts.append(experience["company"])
 
         candidate_text = " ".join(
             normalize_entity(str(item))
             for item in candidate_text_parts
         )
 
-        candidate_words = set(
+        candidate_words = {
             word
             for word in candidate_text.split()
             if len(word) > 2
-        )
+        }
 
         if not candidate_words:
             return 0.0
 
-        matched_words = query_words.intersection(
-            candidate_words
-        )
-
+        matched_words = query_words.intersection(candidate_words)
         return len(matched_words) / len(query_words)

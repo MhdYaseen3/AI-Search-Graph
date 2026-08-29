@@ -7,14 +7,13 @@ import {
   Briefcase,
   MapPin,
   DollarSign,
-  TrendingUp,
   ChevronRight,
   Award,
   Calendar,
   AlertCircle
 } from 'lucide-react';
 import { jobService } from '../services/api';
-import type { Job, CreateJobInput, JobStatus, EmploymentType } from '../types';
+import type { Job, CreateJobInput, JobStatus } from '../types';
 import { CreateJobForm } from '../components/CreateJobForm';
 
 export const Jobs: React.FC = () => {
