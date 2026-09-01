@@ -30,6 +30,7 @@ class RankedCandidate(BaseModel):
     matched_technologies: list[str] = Field(default_factory=list)
     matched_projects: list[str] = Field(default_factory=list)
     match_breakdown: MatchBreakdown = Field(default_factory=MatchBreakdown)
+    explanation: str | None = None
     summary: str | None = None
 
 
@@ -64,3 +65,28 @@ class MatchExplanationResponse(BaseModel):
     query: str
     explanation: str
     source: str = "deterministic"
+
+
+class StructuredMatchExplanationRequest(BaseModel):
+    """Request for AI explanation using structured match evidence from ranking."""
+    candidate_id: str
+    candidate_name: str
+    query: str
+    role: str | None = None
+    skills: list[str] = Field(default_factory=list)
+    technologies: list[str] = Field(default_factory=list)
+    projects: list[str] = Field(default_factory=list)
+    min_experience_years: float | None = None
+    matched_roles: list[str] = Field(default_factory=list)
+    matched_skills: list[str] = Field(default_factory=list)
+    matched_technologies: list[str] = Field(default_factory=list)
+    matched_projects: list[str] = Field(default_factory=list)
+    match_breakdown: MatchBreakdown = Field(default_factory=MatchBreakdown)
+    experience_years: float | None = None
+
+
+class StructuredMatchExplanationResponse(BaseModel):
+    candidate_id: str
+    query: str
+    explanation: str
+    source: str = "ai"

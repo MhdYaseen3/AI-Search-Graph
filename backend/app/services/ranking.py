@@ -25,6 +25,7 @@ class RankingService:
                 continue
 
             match_breakdown = self._compute_match_breakdown(candidate, query)
+            explanation = self._build_match_explanation(candidate, query)
 
             ranked.append(
                 RankedCandidate(
@@ -49,12 +50,69 @@ class RankingService:
                         [],
                     ),
                     match_breakdown=match_breakdown,
+                    explanation=explanation,
                     summary=candidate.get("summary"),
                 )
             )
 
         ranked.sort(key=lambda item: item.score, reverse=True)
         return ranked[: query.limit]
+
+    def _build_match_explanation(
+        self,
+        candidate: dict[str, Any],
+        query: SearchQuery,
+    ) -> str:
+        """Build deterministic match explanation using available data."""
+        parts: list[str] = []
+
+        # Role match
+        if query.role:
+            matched_roles = candidate.get("matched_roles", [])
+            if matched_roles:
+                parts.append(f"Role: Match ({matched_roles[0]})")
+            else:
+                parts.append("Role: No match")
+
+        # Experience match
+        if query.min_experience_years is not None:
+            experience_years = candidate.get("experience_years") or 0.0
+            if experience_years >= query.min_experience_years:
+                parts.append(
+                    f"Experience: Match ({experience_years} years, "
+                    f"requested {query.min_experience_years}+ years)"
+                )
+            else:
+                parts.append(
+                    f"Experience: No match ({experience_years} years, "
+                    f"requested {query.min_experience_years}+ years)"
+                )
+
+        # Skills match
+        if query.skills:
+            matched_skills = candidate.get("matched_skills", [])
+            if matched_skills:
+                parts.append(f"Skills matched: {', '.join(matched_skills)}")
+            else:
+                parts.append("Skills: No match")
+
+        # Technologies match
+        if query.technologies:
+            matched_technologies = candidate.get("matched_technologies", [])
+            if matched_technologies:
+                parts.append(f"Technologies matched: {', '.join(matched_technologies)}")
+            else:
+                parts.append("Technologies: No match")
+
+        # Projects match
+        if query.projects:
+            matched_projects = candidate.get("matched_projects", [])
+            if matched_projects:
+                parts.append(f"Projects matched: {', '.join(matched_projects)}")
+            else:
+                parts.append("Projects: No match")
+
+        return ". ".join(parts) if parts else "Match based on profile overlap."
 
     def _compute_match_breakdown(
         self,

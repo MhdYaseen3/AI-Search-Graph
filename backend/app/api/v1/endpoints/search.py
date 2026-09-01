@@ -7,9 +7,13 @@ from app.api.deps import (
     get_search_service,
 )
 from app.schemas.search import (
+    MatchBreakdown,
     MatchExplanationRequest,
     MatchExplanationResponse,
+    SearchQuery,
     SearchResponse,
+    StructuredMatchExplanationRequest,
+    StructuredMatchExplanationResponse,
 )
 from app.services.ai_summary import AISummaryService
 from app.services.query_parser import QueryParser
@@ -63,6 +67,45 @@ async def explain_match(
     )
 
     return MatchExplanationResponse(
+        candidate_id=payload.candidate_id,
+        query=payload.query,
+        explanation=explanation,
+        source=source,
+    )
+
+
+@router.post(
+    "/explain/structured",
+    response_model=StructuredMatchExplanationResponse,
+)
+async def explain_match_structured(
+    payload: StructuredMatchExplanationRequest,
+    query_parser: QueryParser = Depends(get_query_parser),
+    summary_service: AISummaryService = Depends(get_ai_summary_service),
+) -> StructuredMatchExplanationResponse:
+    """Generate AI explanation using structured match evidence from ranking."""
+    parsed_query = SearchQuery(
+        query=payload.query,
+        role=payload.role,
+        skills=payload.skills,
+        technologies=payload.technologies,
+        projects=payload.projects,
+        min_experience_years=payload.min_experience_years,
+    )
+
+    explanation, source = await summary_service.generate_structured_match_explanation(
+        candidate_id=payload.candidate_id,
+        candidate_name=payload.candidate_name,
+        query=parsed_query,
+        matched_roles=payload.matched_roles,
+        matched_skills=payload.matched_skills,
+        matched_technologies=payload.matched_technologies,
+        matched_projects=payload.matched_projects,
+        match_breakdown=payload.match_breakdown,
+        experience_years=payload.experience_years,
+    )
+
+    return StructuredMatchExplanationResponse(
         candidate_id=payload.candidate_id,
         query=payload.query,
         explanation=explanation,

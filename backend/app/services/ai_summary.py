@@ -6,7 +6,7 @@ import httpx
 from app.core.config import settings
 from app.core.exceptions import ExternalServiceError, NotFoundError
 from app.db.neo4j import Neo4jConnection
-from app.schemas.search import SearchQuery
+from app.schemas.search import MatchBreakdown, SearchQuery
 from app.utils.experience_calc import calculate_experience_years
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,57 @@ class AISummaryService:
                 self._build_fallback_match_explanation(
                     candidate_data,
                     query,
+                ),
+                "fallback",
+            )
+
+    async def generate_structured_match_explanation(
+        self,
+        candidate_id: str,
+        candidate_name: str,
+        query: SearchQuery,
+        matched_roles: list[str],
+        matched_skills: list[str],
+        matched_technologies: list[str],
+        matched_projects: list[str],
+        match_breakdown: MatchBreakdown,
+        experience_years: float | None = None,
+    ) -> tuple[str, str]:
+        """Generate AI explanation using structured match evidence from ranking."""
+        prompt = self._build_structured_match_prompt(
+            candidate_name,
+            query,
+            matched_roles,
+            matched_skills,
+            matched_technologies,
+            matched_projects,
+            match_breakdown,
+            experience_years,
+        )
+
+        try:
+            explanation = await self._call_ollama(prompt)
+            logger.info(
+                "Generated AI structured match explanation for candidate %s",
+                candidate_id,
+            )
+            return explanation.strip(), "ai"
+        except Exception as exc:
+            logger.warning(
+                "AI structured match explanation unavailable for %s: %s",
+                candidate_id,
+                exc,
+            )
+            return (
+                self._build_fallback_structured_explanation(
+                    candidate_name,
+                    query,
+                    matched_roles,
+                    matched_skills,
+                    matched_technologies,
+                    matched_projects,
+                    match_breakdown,
+                    experience_years,
                 ),
                 "fallback",
             )
@@ -197,6 +248,276 @@ Minimum experience requested:
 Write 3-4 plain sentences explaining why this candidate matches the query.
 Use only the information provided.
 """
+
+    def _build_structured_match_prompt(
+        self,
+        candidate_name: str,
+        query: SearchQuery,
+        matched_roles: list[str],
+        matched_skills: list[str],
+        matched_technologies: list[str],
+        matched_projects: list[str],
+        match_breakdown: MatchBreakdown,
+        experience_years: float | None = None,
+    ) -> str:
+        """Build AI prompt using structured match evidence from ranking."""
+        base = f"""
+You are a recruitment explanation system.
+
+Search query:
+{query.query}
+
+Candidate:
+{candidate_name}
+
+STRUCTURED MATCH EVIDENCE (from search/ranking pipeline):
+
+Requested role: {query.role or "None"}
+Matched roles: {', '.join(matched_roles) if matched_roles else "None"}
+Role match: {match_breakdown.role_match}
+
+Requested skills: {', '.join(query.skills) if query.skills else "None"}
+Matched skills: {', '.join(matched_skills) if matched_skills else "None"}
+Skill match: {match_breakdown.skill_match}
+
+Requested technologies: {', '.join(query.technologies) if query.technologies else "None"}
+Matched technologies: {', '.join(matched_technologies) if matched_technologies else "None"}
+Technology match: {match_breakdown.technology_match}
+
+Requested projects: {', '.join(query.projects) if query.projects else "None"}
+Matched projects: {', '.join(matched_projects) if matched_projects else "None"}
+Project match: {match_breakdown.project_match}
+
+Requested minimum experience: {query.min_experience_years or "None"} years
+Candidate experience: {experience_years or "Unknown"} years
+Experience match: {match_breakdown.experience_match}
+
+CRITICAL SAFETY RULES:
+- Use ONLY the structured evidence provided above.
+- Do NOT invent skills, technologies, experience, projects, or qualifications.
+- If evidence is missing or says "None", state that it is unavailable.
+- Do NOT fabricate candidate information not in the evidence.
+- Explain why the candidate matches based on the evidence.
+- Highlight strongest matching requirements.
+- Mention gaps or missing requirements when evident.
+- Provide a concise recruiter recommendation.
+
+Write 3-4 sentences explaining the match using only the evidence above.
+"""
+        return base
+
+    def _build_fallback_structured_explanation(
+        self,
+        candidate_name: str,
+        query: SearchQuery,
+        matched_roles: list[str],
+        matched_skills: list[str],
+        matched_technologies: list[str],
+        matched_projects: list[str],
+        match_breakdown: MatchBreakdown,
+        experience_years: float | None = None,
+    ) -> str:
+        """Build fallback explanation using structured match evidence."""
+        parts: list[str] = []
+
+        # Role match
+        if query.role:
+            if matched_roles:
+                parts.append(
+                    f"{candidate_name} matches the requested role: {matched_roles[0]}."
+                )
+            else:
+                parts.append(
+                    f"{candidate_name} does not match the requested role of {query.role}."
+                )
+
+        # Experience match
+        if query.min_experience_years is not None:
+            if experience_years is not None:
+                if experience_years >= query.min_experience_years:
+                    parts.append(
+                        f"They have {experience_years} years of experience, "
+                        f"meeting the {query.min_experience_years}+ year requirement."
+                    )
+                else:
+                    parts.append(
+                        f"They have {experience_years} years of experience, "
+                        f"below the {query.min_experience_years}+ year requirement."
+                    )
+            else:
+                parts.append("Experience information is unavailable.")
+
+        # Skills match
+        if query.skills:
+            if matched_skills:
+                parts.append(
+                    f"They match requested skills: {', '.join(matched_skills)}."
+                )
+            else:
+                parts.append("They do not match the requested skills.")
+
+        # Technologies match
+        if query.technologies:
+            if matched_technologies:
+                parts.append(
+                    f"They match requested technologies: {', '.join(matched_technologies)}."
+                )
+            else:
+                parts.append("They do not match the requested technologies.")
+
+        # Projects match
+        if query.projects:
+            if matched_projects:
+                parts.append(
+                    f"Relevant projects include: {', '.join(matched_projects)}."
+                )
+            else:
+                parts.append("No matching projects found.")
+
+        # Recommendation
+        if match_breakdown.role_match and match_breakdown.skill_match:
+            parts.append("Strong match for the position.")
+        elif match_breakdown.skill_match:
+            parts.append("Partial match based on skills.")
+        else:
+            parts.append("Limited match based on available evidence.")
+
+        return " ".join(parts)
+
+    def _build_structured_match_prompt(
+        self,
+        candidate_name: str,
+        query: SearchQuery,
+        matched_roles: list[str],
+        matched_skills: list[str],
+        matched_technologies: list[str],
+        matched_projects: list[str],
+        match_breakdown: MatchBreakdown,
+        experience_years: float | None = None,
+    ) -> str:
+        """Build AI prompt using structured match evidence from ranking."""
+        base = f"""
+You are a recruitment explanation system.
+
+Search query:
+{query.query}
+
+Candidate:
+{candidate_name}
+
+STRUCTURED MATCH EVIDENCE (from search/ranking pipeline):
+
+Requested role: {query.role or "None"}
+Matched roles: {', '.join(matched_roles) if matched_roles else "None"}
+Role match: {match_breakdown.role_match}
+
+Requested skills: {', '.join(query.skills) if query.skills else "None"}
+Matched skills: {', '.join(matched_skills) if matched_skills else "None"}
+Skill match: {match_breakdown.skill_match}
+
+Requested technologies: {', '.join(query.technologies) if query.technologies else "None"}
+Matched technologies: {', '.join(matched_technologies) if matched_technologies else "None"}
+Technology match: {match_breakdown.technology_match}
+
+Requested projects: {', '.join(query.projects) if query.projects else "None"}
+Matched projects: {', '.join(matched_projects) if matched_projects else "None"}
+Project match: {match_breakdown.project_match}
+
+Requested minimum experience: {query.min_experience_years or "None"} years
+Candidate experience: {experience_years or "Unknown"} years
+Experience match: {match_breakdown.experience_match}
+
+CRITICAL SAFETY RULES:
+- Use ONLY the structured evidence provided above.
+- Do NOT invent skills, technologies, experience, projects, or qualifications.
+- If evidence is missing or says "None", state that it is unavailable.
+- Do NOT fabricate candidate information not in the evidence.
+- Explain why the candidate matches based on the evidence.
+- Highlight strongest matching requirements.
+- Mention gaps or missing requirements when evident.
+- Provide a concise recruiter recommendation.
+
+Write 3-4 sentences explaining the match using only the evidence above.
+"""
+        return base
+
+    def _build_fallback_structured_explanation(
+        self,
+        candidate_name: str,
+        query: SearchQuery,
+        matched_roles: list[str],
+        matched_skills: list[str],
+        matched_technologies: list[str],
+        matched_projects: list[str],
+        match_breakdown: MatchBreakdown,
+        experience_years: float | None = None,
+    ) -> str:
+        """Build fallback explanation using structured match evidence."""
+        parts: list[str] = []
+
+        # Role match
+        if query.role:
+            if matched_roles:
+                parts.append(
+                    f"{candidate_name} matches the requested role: {matched_roles[0]}."
+                )
+            else:
+                parts.append(
+                    f"{candidate_name} does not match the requested role of {query.role}."
+                )
+
+        # Experience match
+        if query.min_experience_years is not None:
+            if experience_years is not None:
+                if experience_years >= query.min_experience_years:
+                    parts.append(
+                        f"They have {experience_years} years of experience, "
+                        f"meeting the {query.min_experience_years}+ year requirement."
+                    )
+                else:
+                    parts.append(
+                        f"They have {experience_years} years of experience, "
+                        f"below the {query.min_experience_years}+ year requirement."
+                    )
+            else:
+                parts.append("Experience information is unavailable.")
+
+        # Skills match
+        if query.skills:
+            if matched_skills:
+                parts.append(
+                    f"They match requested skills: {', '.join(matched_skills)}."
+                )
+            else:
+                parts.append("They do not match the requested skills.")
+
+        # Technologies match
+        if query.technologies:
+            if matched_technologies:
+                parts.append(
+                    f"They match requested technologies: {', '.join(matched_technologies)}."
+                )
+            else:
+                parts.append("They do not match the requested technologies.")
+
+        # Projects match
+        if query.projects:
+            if matched_projects:
+                parts.append(
+                    f"Relevant projects include: {', '.join(matched_projects)}."
+                )
+            else:
+                parts.append("No matching projects found.")
+
+        # Recommendation
+        if match_breakdown.role_match and match_breakdown.skill_match:
+            parts.append("Strong match for the position.")
+        elif match_breakdown.skill_match:
+            parts.append("Partial match based on skills.")
+        else:
+            parts.append("Limited match based on available evidence.")
+
+        return " ".join(parts)
 
     def _build_fallback_summary(
         self,
