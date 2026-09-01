@@ -1,6 +1,15 @@
 from pydantic import BaseModel, Field
 
 
+class MatchBreakdown(BaseModel):
+    """Structured breakdown of why a candidate matches a query."""
+    role_match: bool = False
+    experience_match: bool = False
+    skill_match: bool = False
+    technology_match: bool = False
+    project_match: bool = False
+
+
 class SearchQuery(BaseModel):
     query: str = ""
     role: str | None = None
@@ -20,6 +29,7 @@ class RankedCandidate(BaseModel):
     matched_skills: list[str] = Field(default_factory=list)
     matched_technologies: list[str] = Field(default_factory=list)
     matched_projects: list[str] = Field(default_factory=list)
+    match_breakdown: MatchBreakdown = Field(default_factory=MatchBreakdown)
     summary: str | None = None
 
 

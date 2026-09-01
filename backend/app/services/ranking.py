@@ -2,7 +2,7 @@ import logging
 from typing import Any
 
 from app.core.config import settings
-from app.schemas.search import RankedCandidate, SearchQuery
+from app.schemas.search import MatchBreakdown, RankedCandidate, SearchQuery
 from app.utils.entity_normalizer import normalize_entity
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,8 @@ class RankingService:
             score = self._compute_score(candidate, query)
             if score < settings.min_rank_score:
                 continue
+
+            match_breakdown = self._compute_match_breakdown(candidate, query)
 
             ranked.append(
                 RankedCandidate(
@@ -46,12 +48,51 @@ class RankingService:
                         "matched_projects",
                         [],
                     ),
+                    match_breakdown=match_breakdown,
                     summary=candidate.get("summary"),
                 )
             )
 
         ranked.sort(key=lambda item: item.score, reverse=True)
         return ranked[: query.limit]
+
+    def _compute_match_breakdown(
+        self,
+        candidate: dict[str, Any],
+        query: SearchQuery,
+    ) -> MatchBreakdown:
+        """Compute structured breakdown of match components."""
+        role_match = bool(
+            query.role and len(candidate.get("matched_roles", [])) > 0
+        )
+
+        experience_match = True
+        if query.min_experience_years is not None:
+            experience_years = candidate.get("experience_years") or 0.0
+            experience_match = experience_years >= query.min_experience_years
+
+        skill_match = bool(
+            len(query.skills) > 0
+            and len(candidate.get("matched_skills", [])) > 0
+        )
+
+        technology_match = bool(
+            len(query.technologies) > 0
+            and len(candidate.get("matched_technologies", [])) > 0
+        )
+
+        project_match = bool(
+            len(query.projects) > 0
+            and len(candidate.get("matched_projects", [])) > 0
+        )
+
+        return MatchBreakdown(
+            role_match=role_match,
+            experience_match=experience_match,
+            skill_match=skill_match,
+            technology_match=technology_match,
+            project_match=project_match,
+        )
 
     def _compute_score(
         self,
