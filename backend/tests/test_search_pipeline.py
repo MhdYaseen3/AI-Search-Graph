@@ -132,3 +132,45 @@ def test_calculate_experience_missing_dates_do_not_crash() -> None:
 
 def test_calculate_experience_no_experience_returns_zero() -> None:
     assert calculate_experience_years([]) == 0.0
+
+
+def test_parse_backend_developer_role(parser: QueryParser) -> None:
+    result = parser.parse("Backend developers with at least 3 years experience")
+
+    assert result.role == "backend developer"
+    assert result.min_experience_years == 3.0
+
+
+def test_parse_frontend_engineer_role(parser: QueryParser) -> None:
+    result = parser.parse("Frontend engineer with React experience")
+
+    assert result.role == "frontend developer"
+    assert "react" in result.skills
+
+
+def test_parse_full_stack_with_skill_and_experience(parser: QueryParser) -> None:
+    result = parser.parse("Full stack developer with 5+ years Python experience")
+
+    assert result.role == "full stack developer"
+    assert result.min_experience_years == 5.0
+    assert "python" in result.skills
+
+
+def test_parse_data_scientist_role(parser: QueryParser) -> None:
+    result = parser.parse("Data scientist with machine learning experience")
+
+    assert result.role == "data scientist"
+
+
+def test_parse_devops_engineer_role(parser: QueryParser) -> None:
+    result = parser.parse("DevOps engineer with Docker and Git")
+
+    assert result.role == "devops engineer"
+    assert "docker" in result.technologies
+
+
+def test_parse_software_developer_role(parser: QueryParser) -> None:
+    result = parser.parse("Software engineer with Java experience")
+
+    assert result.role == "software developer"
+    assert "java" in result.skills

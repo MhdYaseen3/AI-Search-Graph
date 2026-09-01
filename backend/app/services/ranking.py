@@ -30,6 +30,10 @@ class RankingService:
                     full_name=candidate.get("full_name", ""),
                     score=score,
                     experience_years=candidate.get("experience_years"),
+                    matched_roles=candidate.get(
+                        "matched_roles",
+                        [],
+                    ),
                     matched_skills=candidate.get(
                         "matched_skills",
                         [],
@@ -55,15 +59,19 @@ class RankingService:
         query: SearchQuery,
     ) -> float:
         """Compute weighted relevance score with dynamic weights."""
+        matched_roles = len(candidate.get("matched_roles", []))
         matched_skills = len(candidate.get("matched_skills", []))
         matched_technologies = len(
             candidate.get("matched_technologies", []),
         )
         matched_projects = len(candidate.get("matched_projects", []))
 
+        requested_roles = 1 if query.role else 0
         requested_skills = len(query.skills)
         requested_technologies = len(query.technologies)
         requested_projects = len(query.projects)
+
+        role_score = 1.0 if matched_roles > 0 and query.role else 0.0
 
         skill_score = (
             matched_skills / requested_skills
@@ -87,11 +95,12 @@ class RankingService:
         query_score = self._query_relevance_score(candidate, query)
 
         weights = {
-            "skills": 0.40 if requested_skills else 0.0,
-            "technologies": 0.25 if requested_technologies else 0.0,
-            "projects": 0.20 if requested_projects else 0.0,
-            "experience": 0.25 if query.min_experience_years else 0.0,
-            "query": 0.15,
+            "role": 0.20 if query.role else 0.0,
+            "skills": 0.35 if requested_skills else 0.0,
+            "technologies": 0.20 if requested_technologies else 0.0,
+            "projects": 0.15 if requested_projects else 0.0,
+            "experience": 0.20 if query.min_experience_years else 0.0,
+            "query": 0.10,
         }
 
         weight_total = sum(weights.values())
@@ -100,7 +109,8 @@ class RankingService:
             weight_total = 1.0
 
         score = (
-            skill_score * weights["skills"] / weight_total
+            role_score * weights["role"] / weight_total
+            + skill_score * weights["skills"] / weight_total
             + technology_score * weights["technologies"] / weight_total
             + project_score * weights["projects"] / weight_total
             + experience_score * weights["experience"] / weight_total
@@ -154,6 +164,7 @@ class RankingService:
         candidate_text_parts.extend(candidate.get("skills", []))
         candidate_text_parts.extend(candidate.get("technologies", []))
         candidate_text_parts.extend(candidate.get("projects", []))
+        candidate_text_parts.extend(candidate.get("roles", []))
 
         if candidate.get("summary"):
             candidate_text_parts.append(candidate["summary"])

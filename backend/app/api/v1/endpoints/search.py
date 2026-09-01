@@ -41,6 +41,7 @@ async def search_candidates(
     return SearchResponse(
         query=query,
         total=len(ranked_results),
+        parsed_role=parsed_query.role,
         parsed_skills=parsed_query.skills,
         parsed_technologies=parsed_query.technologies,
         parsed_projects=parsed_query.projects,

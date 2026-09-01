@@ -40,6 +40,7 @@ class SearchService:
             collect(DISTINCT t.name) AS technologies,
             collect(DISTINCT p.name) AS projects,
             collect(DISTINCT e.institution) AS education,
+            collect(DISTINCT x.role) AS roles,
             collect(DISTINCT {
                 company: x.company,
                 role: x.role,
@@ -53,6 +54,7 @@ class SearchService:
             technologies,
             projects,
             education,
+            roles,
             experiences,
 
             [requested IN $skills
@@ -74,7 +76,12 @@ class SearchService:
                  candidate_project IN projects
                  WHERE toLower(candidate_project) CONTAINS toLower(requested)
              )
-            ] AS matched_projects
+            ] AS matched_projects,
+
+            [candidate_role IN roles
+             WHERE candidate_role IS NOT NULL
+                AND toLower(candidate_role) CONTAINS toLower($role)
+            ] AS matched_roles
 
         WHERE
             (
@@ -91,6 +98,11 @@ class SearchService:
                 size($projects) = 0
                 OR size(matched_projects) > 0
             )
+            AND
+            (
+                $role IS NULL
+                OR size(matched_roles) > 0
+            )
 
         RETURN
             c.id AS candidate_id,
@@ -101,16 +113,19 @@ class SearchService:
             technologies,
             projects,
             education,
+            roles,
             experiences,
 
             matched_skills,
             matched_technologies,
-            matched_projects
+            matched_projects,
+            matched_roles
 
         LIMIT $limit
         """
 
         parameters = {
+            "role": query.role,
             "skills": query.skills,
             "technologies": query.technologies,
             "projects": query.projects,
@@ -119,9 +134,10 @@ class SearchService:
 
         logger.info(
             "Executing graph search. "
-            "query=%s skills=%s technologies=%s projects=%s "
+            "query=%s role=%s skills=%s technologies=%s projects=%s "
             "min_experience_years=%s",
             query.query,
+            query.role,
             query.skills,
             query.technologies,
             query.projects,

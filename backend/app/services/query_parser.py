@@ -42,8 +42,19 @@ class QueryParser:
         "smart housing",
     }
 
+    ROLES = {
+        "backend developer": ["backend developer", "backend engineer"],
+        "frontend developer": ["frontend developer", "frontend engineer"],
+        "full stack developer": ["full stack developer", "full stack engineer"],
+        "software developer": ["software developer", "software engineer"],
+        "data scientist": ["data scientist"],
+        "devops engineer": ["devops engineer", "devops"],
+    }
+
     def parse(self, text: str, limit: int = 20) -> SearchQuery:
         text_lower = text.lower()
+
+        role = self._find_roles(text_lower)
 
         skills = self._find_matches(
             text_lower,
@@ -63,6 +74,7 @@ class QueryParser:
 
         return SearchQuery(
             query=text,
+            role=role,
             skills=normalize_entities(skills),
             technologies=normalize_entities(technologies),
             projects=normalize_entities(projects),
@@ -110,5 +122,27 @@ class QueryParser:
 
             if match:
                 return float(match.group(1))
+
+        return None
+
+    def _find_roles(self, text: str) -> str | None:
+        """Find job role mentions in the query and return canonical role name."""
+        for canonical_role, aliases in self.ROLES.items():
+            for alias in aliases:
+                # Handle both singular and plural forms
+                alias_variants = [alias]
+                if alias.endswith("er"):
+                    alias_variants.append(alias + "s")
+                elif alias.endswith("engineer"):
+                    alias_variants.append(alias.replace("engineer", "engineers"))
+                elif alias.endswith("developer"):
+                    alias_variants.append(alias.replace("developer", "developers"))
+                elif alias.endswith("scientist"):
+                    alias_variants.append(alias.replace("scientist", "scientists"))
+
+                for variant in alias_variants:
+                    pattern = rf"(?<!\w){re.escape(variant)}(?!\w)"
+                    if re.search(pattern, text, re.IGNORECASE):
+                        return canonical_role
 
         return None
