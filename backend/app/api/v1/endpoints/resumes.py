@@ -21,6 +21,7 @@ from app.schemas.resume import (
     ResumeIngestResponse,
 )
 from app.schemas.search import AISummaryRequest, AISummaryResponse
+from app.schemas.candidate import CandidateUpdate
 from app.services.ai_summary import AISummaryService
 from app.services.neo4j_graph import Neo4jGraphService
 from app.services.pdf_extraction import PDFExtractionService
@@ -32,6 +33,7 @@ from app.services.education_extraction import EducationExtractionService
 from app.services.technology_extraction import TechnologyExtractionService
 from app.models.education import Education
 from app.services.resume_parser_service import ResumeParserService
+from app.services.candidate_management import CandidateManagementService
 
 router = APIRouter(
     prefix="/resumes",
@@ -73,6 +75,7 @@ async def process_resume(
     project_service: ProjectExtractionService = Depends(get_project_extraction_service),
     education_service: EducationExtractionService = Depends(get_education_extraction_service),
     technology_service: TechnologyExtractionService = Depends(get_technology_extraction_service),
+    candidate_service: CandidateManagementService = Depends(get_candidate_service),
     graph_service: Neo4jGraphService = Depends(get_neo4j_graph_service),
 ) -> ExtractedResumeData:
     """Extract resume content and persist knowledge graph relationships."""
@@ -83,8 +86,13 @@ async def process_resume(
 
     skills = await skill_service.extract_skills(raw_text)
     projects = await project_service.extract_projects(raw_text)
-    education = await education_service.extract_education(raw_text)
+    education = parsed.education
     technologies = await technology_service.extract_technologies(raw_text)
+
+    await candidate_service.update(
+        candidate_id,
+        CandidateUpdate(summary=parsed.summary, raw_text=raw_text),
+    )
 
     for skill in skills:
         await graph_service.link_skill(candidate_id, skill)
@@ -93,7 +101,13 @@ async def process_resume(
         await graph_service.link_project(candidate_id, project)
 
     for edu in education:
-        education_obj = Education(institution=edu)
+        education_obj = Education(
+            institution=edu.institution or "Unknown",
+            degree=edu.degree,
+            field_of_study=edu.field_of_study,
+            expected_graduation=edu.expected_graduation,
+            cgpa=edu.cgpa,
+        )
         await graph_service.link_education(candidate_id, education_obj)
 
     for exp in parsed.experiences:
@@ -101,6 +115,7 @@ async def process_resume(
             company=exp.company or "Unknown",
             role=exp.role,
             description=exp.description,
+            duration=exp.duration,
             start_date=exp.start_date,
             end_date=exp.end_date,
         )
@@ -117,7 +132,7 @@ async def process_resume(
         raw_text=raw_text,
         skills=[s.name for s in skills],
         projects=[p.name for p in projects],
-        education=education,
+        education=[edu.institution for edu in education if edu.institution],
         experiences=[experience.model_dump() for experience in parsed.experiences],
         technologies=technologies,
     )

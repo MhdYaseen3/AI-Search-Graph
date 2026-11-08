@@ -1,7 +1,15 @@
 from fastapi import APIRouter, Depends, Query, status
 from app.api.deps import get_job_service
 from app.schemas.common import MessageResponse
-from app.schemas.job import JobCreate, JobListResponse, JobResponse, JobUpdate
+from app.schemas.job import (
+    JobApplicationCreate,
+    JobApplicationResponse,
+    JobApplicationUpdate,
+    JobCreate,
+    JobListResponse,
+    JobResponse,
+    JobUpdate,
+)
 from app.services.job import JobManagementService
 
 router = APIRouter(
@@ -55,6 +63,47 @@ async def search_jobs(
         skip=skip,
         limit=limit,
         items=[JobResponse.model_validate(j) for j in jobs],
+    )
+
+
+@router.get(
+    "/{job_id}/applicants",
+    response_model=list[JobApplicationResponse],
+)
+async def list_job_applicants(
+    job_id: str,
+    service: JobManagementService = Depends(get_job_service),
+) -> list[JobApplicationResponse]:
+    return await service.list_applicants(job_id)
+
+
+@router.post(
+    "/{job_id}/applicants",
+    response_model=JobApplicationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_job_applicant(
+    job_id: str,
+    payload: JobApplicationCreate,
+    service: JobManagementService = Depends(get_job_service),
+) -> JobApplicationResponse:
+    return await service.add_applicant(job_id, payload.candidate_id)
+
+
+@router.patch(
+    "/{job_id}/applicants/{candidate_id}",
+    response_model=JobApplicationResponse,
+)
+async def update_job_applicant(
+    job_id: str,
+    candidate_id: str,
+    payload: JobApplicationUpdate,
+    service: JobManagementService = Depends(get_job_service),
+) -> JobApplicationResponse:
+    return await service.update_applicant_status(
+        job_id,
+        candidate_id,
+        payload.status,
     )
 
 

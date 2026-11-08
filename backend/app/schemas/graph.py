@@ -37,6 +37,7 @@ class GraphNodeResponse(BaseModel):
 
 
 class GraphLinkResponse(BaseModel):
+    id: str | None = None
     source: str
     target: str
     type: str
@@ -44,5 +45,8 @@ class GraphLinkResponse(BaseModel):
 
 class CandidateGraphResponse(BaseModel):
     candidate_id: str
+    total: int | None = None
+    skip: int = 0
+    limit: int | None = None
     nodes: list[GraphNodeResponse] = Field(default_factory=list)
     links: list[GraphLinkResponse] = Field(default_factory=list)

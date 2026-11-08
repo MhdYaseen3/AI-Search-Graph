@@ -3,6 +3,7 @@ from app.db.nodes.candidate import CandidateNode
 from app.db.nodes.constraints import (
     NODE_CONSTRAINTS,
     NODE_INDEXES,
+    SCHEMA_MIGRATIONS,
     SCHEMA_STATEMENTS,
 )
 from app.db.nodes.education import EducationNode
@@ -20,6 +21,7 @@ __all__ = [
     "JobNode",
     "NODE_CONSTRAINTS",
     "NODE_INDEXES",
+    "SCHEMA_MIGRATIONS",
     "ProjectNode",
     "SCHEMA_STATEMENTS",
     "SkillNode",

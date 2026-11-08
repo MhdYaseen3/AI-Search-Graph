@@ -11,4 +11,5 @@ class Candidate(BaseEntity):
     summary: str | None = None
     resume_file_path: str | None = None
     raw_text: str | None = None
+    source: str | None = None
     skills: list[str] = []

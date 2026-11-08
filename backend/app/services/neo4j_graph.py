@@ -1,5 +1,8 @@
 import logging
+from datetime import datetime, timezone
 from typing  import Any, TypeVar
+
+from neo4j import AsyncTransaction
 
 from app.core.exceptions import DatabaseError, NotFoundError
 from app.db.neo4j import Neo4jConnection
@@ -52,6 +55,181 @@ class Neo4jGraphService:
         node = CandidateNode.from_domain(candidate)
         records = await self._merge_node(node)
         return CandidateNode.from_neo4j(records[0]["n"]).to_domain()
+
+    async def persist_resume_graph(
+        self,
+        candidate: Candidate,
+        skills: list[Skill],
+        projects: list[Project],
+        education: list[Education],
+        experiences: list[Experience],
+        technologies: list[Technology],
+        *,
+        gmail_message_id: str,
+        gmail_attachment_id: str,
+        filename: str,
+        sha256: str,
+    ) -> None:
+        """Persist a Gmail resume and its graph relationships atomically."""
+        async def persist(tx: AsyncTransaction) -> None:
+            await self._merge_node_in_transaction(
+                tx,
+                CandidateNode.from_domain(candidate),
+            )
+
+            for skill in skills:
+                await self._merge_node_in_transaction(
+                    tx,
+                    SkillNode.from_domain(skill),
+                )
+                await self._run_transaction_write(
+                    tx,
+                    f"""
+                    MATCH (c:Candidate {{id: $candidate_id}})
+                    MATCH (s:Skill {{name: $name}})
+                    MERGE (c)-[:{HAS_SKILL}]->(s)
+                    """,
+                    {
+                        "candidate_id": candidate.id,
+                        "name": skill.name.strip(),
+                    },
+                )
+
+            for project in projects:
+                await self._merge_node_in_transaction(
+                    tx,
+                    ProjectNode.from_domain(project),
+                )
+                await self._run_transaction_write(
+                    tx,
+                    f"""
+                    MATCH (c:Candidate {{id: $candidate_id}})
+                    MATCH (p:Project {{id: $project_id}})
+                    MERGE (c)-[:{WORKED_ON}]->(p)
+                    """,
+                    {
+                        "candidate_id": candidate.id,
+                        "project_id": project.id,
+                    },
+                )
+
+            for institution in education:
+                await self._merge_node_in_transaction(
+                    tx,
+                    EducationNode.from_domain(institution),
+                )
+                await self._run_transaction_write(
+                    tx,
+                    f"""
+                    MATCH (c:Candidate {{id: $candidate_id}})
+                    MATCH (e:Education {{institution: $institution}})
+                    MERGE (c)-[:{STUDIED_AT}]->(e)
+                    """,
+                    {
+                        "candidate_id": candidate.id,
+                        "institution": institution.institution,
+                    },
+                )
+
+            for experience in experiences:
+                await self._merge_node_in_transaction(
+                    tx,
+                    ExperienceNode.from_domain(experience),
+                )
+                await self._run_transaction_write(
+                    tx,
+                    f"""
+                    MATCH (c:Candidate {{id: $candidate_id}})
+                    MATCH (e:Experience {{id: $experience_id}})
+                    MERGE (c)-[:{WORKED_AT}]->(e)
+                    """,
+                    {
+                        "candidate_id": candidate.id,
+                        "experience_id": experience.id,
+                    },
+                )
+
+            for technology in technologies:
+                await self._merge_node_in_transaction(
+                    tx,
+                    TechnologyNode.from_domain(technology),
+                )
+                await self._run_transaction_write(
+                    tx,
+                    f"""
+                    MATCH (c:Candidate {{id: $candidate_id}})
+                    MATCH (t:Technology {{name: $name}})
+                    MERGE (c)-[:{USES_TECHNOLOGY}]->(t)
+                    """,
+                    {
+                        "candidate_id": candidate.id,
+                        "name": technology.name.strip(),
+                    },
+                )
+
+            await self._run_transaction_write(
+                tx,
+                """
+                MERGE (a:GmailAttachment {
+                    message_id: $message_id,
+                    attachment_id: $attachment_id
+                })
+                SET a.source = 'gmail',
+                    a.status = 'SUCCESS',
+                    a.sha256 = $sha256,
+                    a.imported_at = coalesce(a.imported_at, $processed_at),
+                    a.updated_at = $processed_at,
+                    a.candidate_id = $candidate_id,
+                    a.filename = $filename,
+                    a.failure_reason = null
+                """,
+                {
+                    "message_id": gmail_message_id,
+                    "attachment_id": gmail_attachment_id,
+                    "processed_at": datetime.now(timezone.utc).isoformat(),
+                    "sha256": sha256,
+                    "candidate_id": candidate.id,
+                    "filename": filename,
+                },
+            )
+            await self._run_transaction_write(
+                tx,
+                """
+                MATCH (h:GmailAttachmentHash {sha256: $sha256})
+                WHERE h.message_id = $message_id
+                  AND h.attachment_id = $attachment_id
+                SET h.status = 'SUCCESS',
+                    h.candidate_id = $candidate_id,
+                    h.failure_reason = null,
+                    h.updated_at = $now
+                """,
+                {
+                    "sha256": sha256,
+                    "message_id": gmail_message_id,
+                    "attachment_id": gmail_attachment_id,
+                    "candidate_id": candidate.id,
+                    "now": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+
+        await self.neo4j.execute_write_transaction(persist)
+
+    @staticmethod
+    async def _merge_node_in_transaction(
+        tx: AsyncTransaction,
+        node: GraphNode,
+    ) -> None:
+        result = await tx.run(node.merge_query(), node.merge_parameters())
+        await result.consume()
+
+    @staticmethod
+    async def _run_transaction_write(
+        tx: AsyncTransaction,
+        query: str,
+        parameters: dict[str, Any],
+    ) -> None:
+        result = await tx.run(query, parameters)
+        await result.consume()
 
     async def get_candidate(self, candidate_id: str) -> Candidate:
         """Fetch a Candidate node by ID."""

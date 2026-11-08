@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { 
   Search as SearchIcon, 
@@ -9,7 +9,9 @@ import {
   ChevronRight,
   GitFork,
   User,
-  FilterX
+  FilterX,
+  Check,
+  X
 } from 'lucide-react';
 import { resumeService } from '../services/api';
 import type { Candidate } from '../types';
@@ -20,77 +22,73 @@ export const Search: React.FC = () => {
   const queryParam = searchParams.get('q') || '';
 
   const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [filteredCandidates, setFilteredCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchVal, setSearchVal] = useState(queryParam);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [searchAttempt, setSearchAttempt] = useState(0);
+  const searchFormRef = useRef<HTMLFormElement>(null);
 
   // Filters State
-  const [minScore, setMinScore] = useState<number>(70);
+  const [minScore, setMinScore] = useState<number>(0);
   const [selectedSkill, setSelectedSkill] = useState<string>('');
   const [selectedLocation, setSelectedLocation] = useState<string>('');
 
-  // Aggregated metadata for filter values
-  const [allSkills, setAllSkills] = useState<string[]>([]);
-  const [allLocations, setAllLocations] = useState<string[]>([]);
-
   useEffect(() => {
-    setSearchVal(queryParam);
-    fetchSearchResults();
-  }, [queryParam]);
+    const controller = new AbortController();
+    let active = true;
 
-  const fetchSearchResults = async () => {
-    setLoading(true);
-    try {
-      const results = await resumeService.searchCandidates(queryParam);
-      setCandidates(results);
-      
-      // Extract unique skills & locations for filters from the returned dataset
-      const skillsSet = new Set<string>();
-      const locationsSet = new Set<string>();
-      results.forEach(c => {
-        c.skills.forEach(s => skillsSet.add(s));
-        if (c.location) locationsSet.add(c.location.split(',')[0].trim());
-      });
-      setAllSkills(Array.from(skillsSet));
-      setAllLocations(Array.from(locationsSet));
-    } catch (err) {
-      console.error('Search error', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+    const fetchSearchResults = async () => {
+      setLoading(true);
+      setSearchError(null);
+      try {
+        const results = await resumeService.searchCandidates(queryParam, controller.signal);
+        if (active) setCandidates(results);
+      } catch (err) {
+        if (!active || controller.signal.aborted) return;
+        console.error('Search error', err);
+        setCandidates([]);
+        setSearchError('Unable to load candidates. Please try again.');
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
 
-  // Run filtering logic client-side on fetched results
-  useEffect(() => {
-    let temp = [...candidates];
+    void fetchSearchResults();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [queryParam, searchAttempt]);
 
-    // Filter by min score
-    temp = temp.filter(c => c.matchScore >= minScore);
+  const allSkills = useMemo(
+    () => Array.from(new Set(candidates.flatMap((candidate) => candidate.skills))),
+    [candidates],
+  );
+  const allLocations = useMemo(
+    () => Array.from(new Set(candidates
+      .map((candidate) => candidate.location)
+      .filter(Boolean)
+      .map((location) => location.split(',')[0].trim()))),
+    [candidates],
+  );
+  const filteredCandidates = useMemo(() => candidates.filter((candidate) => (
+    (minScore === 0 || candidate.matchScore >= minScore)
+    && (!selectedSkill || candidate.skills.includes(selectedSkill))
+    && (!selectedLocation || candidate.location.toLowerCase().includes(selectedLocation.toLowerCase()))
+  )), [candidates, minScore, selectedSkill, selectedLocation]);
 
-    // Filter by skill
-    if (selectedSkill) {
-      temp = temp.filter(c => c.skills.includes(selectedSkill));
-    }
-
-    // Filter by location
-    if (selectedLocation) {
-      temp = temp.filter(c => c.location.toLowerCase().includes(selectedLocation.toLowerCase()));
-    }
-
-    setFilteredCandidates(temp);
-  }, [candidates, minScore, selectedSkill, selectedLocation]);
-
-  const handleSearchSubmit = (e: React.FormEvent) => {
+  const handleSearchSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setSearchParams(searchVal ? { q: searchVal } : {});
+    const formData = new FormData(e.currentTarget);
+    const query = String(formData.get('query') ?? '').trim();
+    setSearchParams(query ? { q: query } : {});
   };
 
   const handleResetFilters = () => {
-    setMinScore(70);
+    setMinScore(0);
     setSelectedSkill('');
     setSelectedLocation('');
-    setSearchVal('');
+    searchFormRef.current?.reset();
     setSearchParams({});
   };
 
@@ -99,14 +97,15 @@ export const Search: React.FC = () => {
       
       {/* SEARCH AND FILTER HEAD BAR */}
       <div className="flex flex-col md:flex-row gap-3 items-center justify-between">
-        <form onSubmit={handleSearchSubmit} className="w-full md:max-w-xl flex items-center gap-2">
+        <form ref={searchFormRef} onSubmit={handleSearchSubmit} className="w-full md:max-w-xl flex items-center gap-2">
           <div className="relative flex-1">
             <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
             <input
+              key={queryParam}
+              name="query"
               type="text"
               placeholder="Search skills, companies, names..."
-              value={searchVal}
-              onChange={(e) => setSearchVal(e.target.value)}
+              defaultValue={queryParam}
               className="w-full bg-slate-900 border border-dark-border focus:border-brand-500 rounded-xl py-3 pl-12 pr-4 text-sm text-slate-100 placeholder-slate-500 outline-none transition-colors"
             />
           </div>
@@ -121,7 +120,7 @@ export const Search: React.FC = () => {
         <button
           onClick={() => setShowFilters(!showFilters)}
           className={`flex items-center gap-2 px-4 py-3 rounded-xl border text-sm font-semibold transition-colors ${
-            showFilters || selectedSkill || selectedLocation || minScore > 70
+            showFilters || selectedSkill || selectedLocation || minScore > 0
               ? 'bg-brand-600/10 border-brand-500/30 text-brand-500'
               : 'bg-slate-900 border-dark-border text-slate-300 hover:bg-slate-800'
           }`}
@@ -143,7 +142,7 @@ export const Search: React.FC = () => {
             </div>
             <input
               type="range"
-              min="50"
+              min="0"
               max="100"
               value={minScore}
               onChange={(e) => setMinScore(Number(e.target.value))}
@@ -201,6 +200,22 @@ export const Search: React.FC = () => {
           <div className="glass-panel rounded-2xl p-6 h-48 animate-shimmer" />
           <div className="glass-panel rounded-2xl p-6 h-48 animate-shimmer" />
         </div>
+      ) : searchError ? (
+        <div className="glass-panel rounded-2xl p-12 text-center max-w-md mx-auto space-y-4 border border-red-500/20">
+          <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 mx-auto">
+            <FilterX size={28} />
+          </div>
+          <div className="space-y-1.5">
+            <h3 className="text-base font-bold text-white">Search unavailable</h3>
+            <p className="text-xs text-slate-400">{searchError}</p>
+          </div>
+          <button
+            onClick={() => setSearchAttempt((attempt) => attempt + 1)}
+            className="bg-brand-600 hover:bg-brand-700 text-white font-semibold text-xs py-2 px-5 rounded-xl shadow-md transition-colors"
+          >
+            Try Again
+          </button>
+        </div>
       ) : filteredCandidates.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {filteredCandidates.map((candidate) => (
@@ -237,6 +252,74 @@ export const Search: React.FC = () => {
                 {candidate.summary}
               </p>
 
+              {/* MATCH INTELLIGENCE */}
+              <div className="space-y-2">
+                {/* Experience Years */}
+                {candidate.experienceYears && (
+                  <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                    <Briefcase size={12} className="text-slate-500" />
+                    <span>{candidate.experienceYears.toFixed(1)} years experience</span>
+                  </div>
+                )}
+
+                {/* Matched Skills */}
+                {candidate.matchedSkills && candidate.matchedSkills.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {candidate.matchedSkills.slice(0, 4).map(skill => (
+                      <span
+                        key={skill}
+                        className="px-2 py-0.5 rounded-md bg-brand-600/10 border border-brand-500/20 text-[9px] text-brand-400 font-semibold"
+                      >
+                        {skill}
+                      </span>
+                    ))}
+                    {candidate.matchedSkills.length > 4 && (
+                      <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-dark-border text-[9px] text-slate-500">
+                        +{candidate.matchedSkills.length - 4} more
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Matched Technologies */}
+                {candidate.matchedTechnologies && candidate.matchedTechnologies.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {candidate.matchedTechnologies.slice(0, 3).map(tech => (
+                      <span
+                        key={tech}
+                        className="px-2 py-0.5 rounded-md bg-indigo-600/10 border border-indigo-500/20 text-[9px] text-indigo-400 font-semibold"
+                      >
+                        {tech}
+                      </span>
+                    ))}
+                    {candidate.matchedTechnologies.length > 3 && (
+                      <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-dark-border text-[9px] text-slate-500">
+                        +{candidate.matchedTechnologies.length - 3} more
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Matched Projects */}
+                {candidate.matchedProjects && candidate.matchedProjects.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {candidate.matchedProjects.slice(0, 2).map(project => (
+                      <span
+                        key={project}
+                        className="px-2 py-0.5 rounded-md bg-amber-600/10 border border-amber-500/20 text-[9px] text-amber-400 font-semibold"
+                      >
+                        {project}
+                      </span>
+                    ))}
+                    {candidate.matchedProjects.length > 2 && (
+                      <span className="px-2 py-0.5 rounded-md bg-slate-900 border border-dark-border text-[9px] text-slate-500">
+                        +{candidate.matchedProjects.length - 2} more
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* HIGHLIGHTED PARAMETERS */}
               <div className="grid grid-cols-2 gap-2 border-t border-b border-dark-border/40 py-3 text-[10px] text-slate-400">
                 <div className="flex items-center gap-1.5">
@@ -245,24 +328,62 @@ export const Search: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-1.5">
                   <GraduationCap size={12} className="text-slate-500" />
-                  <span>{candidate.education[0]?.school.split('University')[0].trim()}</span>
+                  <span>{candidate.education[0]?.school?.split('University')[0].trim() || 'Education not specified'}</span>
                 </div>
               </div>
 
-              {/* SKILLS CHIPS */}
-              <div className="flex flex-wrap gap-1.5">
-                {candidate.skills.slice(0, 4).map(s => (
-                  <span 
-                    key={s} 
-                    className="px-2 py-0.5 rounded-md bg-slate-900 border border-dark-border text-[9px] text-slate-300 font-semibold"
-                  >
-                    {s}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Match intelligence</span>
+                  <span className="text-[10px] text-slate-500">
+                    {candidate.experienceYears != null ? `${candidate.experienceYears} years experience` : 'Experience not specified'}
                   </span>
-                ))}
-                {candidate.skills.length > 4 && (
-                  <span className="px-2 py-0.5 rounded-md bg-slate-950 border border-dark-border/40 text-[9px] text-slate-500">
-                    +{candidate.skills.length - 4} more
-                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { label: 'Role', matched: candidate.matchBreakdown?.role_match },
+                    { label: 'Experience', matched: candidate.matchBreakdown?.experience_match },
+                    { label: 'Skills', matched: candidate.matchBreakdown?.skill_match },
+                    { label: 'Technologies', matched: candidate.matchBreakdown?.technology_match },
+                    { label: 'Projects', matched: candidate.matchBreakdown?.project_match },
+                  ].map(({ label, matched }) => (
+                    <span
+                      key={label}
+                      className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[9px] font-semibold ${
+                        matched ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400' : 'border-dark-border bg-slate-950 text-slate-500'
+                      }`}
+                    >
+                      {matched ? <Check size={10} /> : <X size={10} />}
+                      {label}
+                    </span>
+                  ))}
+                </div>
+
+                {[
+                  { label: 'Skills', values: candidate.matchedSkills || candidate.skills, colorClass: 'bg-slate-900' },
+                  { label: 'Technologies', values: candidate.matchedTechnologies || candidate.technologies || [], colorClass: 'bg-brand-600/10' },
+                  { label: 'Projects', values: candidate.matchedProjects || candidate.projects || [], colorClass: 'bg-emerald-500/10' },
+                ].map(({ label, values, colorClass }) => {
+                  const items = values;
+                  return items.length > 0 ? (
+                    <div key={label} className="space-y-1">
+                      <span className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">Matched {label}</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {items.map((item) => (
+                          <span key={item} className={`rounded-md border border-dark-border px-2 py-0.5 text-[9px] font-semibold text-slate-300 ${colorClass}`}>
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null;
+                })}
+
+                {candidate.matchExplanation && (
+                  <p className="border-l-2 border-brand-500/40 pl-2 text-[10px] leading-relaxed text-slate-400">
+                    {candidate.matchExplanation}
+                  </p>
                 )}
               </div>
 
@@ -275,7 +396,7 @@ export const Search: React.FC = () => {
                 
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => navigate(`/candidate/${candidate.id}`)}
+                    onClick={() => navigate(`/candidate/${candidate.id}?query=${encodeURIComponent(queryParam)}&matchScore=${candidate.matchScore}`)}
                     className="bg-brand-600/10 hover:bg-brand-600/20 text-brand-500 font-semibold text-[11px] py-1.5 px-3 rounded-lg border border-brand-500/20 flex items-center gap-1 transition-all duration-200"
                   >
                     <User size={12} />

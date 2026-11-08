@@ -49,6 +49,10 @@ class RankingService:
                         "matched_projects",
                         [],
                     ),
+                    matched_education=candidate.get(
+                        "matched_education",
+                        [],
+                    ),
                     match_breakdown=match_breakdown,
                     explanation=explanation,
                     summary=candidate.get("summary"),
@@ -112,6 +116,14 @@ class RankingService:
             else:
                 parts.append("Projects: No match")
 
+        # Education match
+        if query.education:
+            matched_education = candidate.get("matched_education", [])
+            if matched_education:
+                parts.append(f"Education matched: {', '.join(matched_education)}")
+            else:
+                parts.append("Education: No match")
+
         return ". ".join(parts) if parts else "Match based on profile overlap."
 
     def _compute_match_breakdown(
@@ -144,12 +156,18 @@ class RankingService:
             and len(candidate.get("matched_projects", [])) > 0
         )
 
+        education_match = bool(
+            len(query.education) > 0
+            and len(candidate.get("matched_education", [])) > 0
+        )
+
         return MatchBreakdown(
             role_match=role_match,
             experience_match=experience_match,
             skill_match=skill_match,
             technology_match=technology_match,
             project_match=project_match,
+            education_match=education_match,
         )
 
     def _compute_score(
@@ -164,11 +182,13 @@ class RankingService:
             candidate.get("matched_technologies", []),
         )
         matched_projects = len(candidate.get("matched_projects", []))
+        matched_education = len(candidate.get("matched_education", []))
 
         requested_roles = 1 if query.role else 0
         requested_skills = len(query.skills)
         requested_technologies = len(query.technologies)
         requested_projects = len(query.projects)
+        requested_education = len(query.education)
 
         role_score = 1.0 if matched_roles > 0 and query.role else 0.0
 
@@ -190,14 +210,21 @@ class RankingService:
             else 0.0
         )
 
+        education_score = (
+            matched_education / requested_education
+            if requested_education
+            else 0.0
+        )
+
         experience_score = self._experience_score(candidate, query)
         query_score = self._query_relevance_score(candidate, query)
 
         weights = {
             "role": 0.20 if query.role else 0.0,
-            "skills": 0.35 if requested_skills else 0.0,
+            "skills": 0.30 if requested_skills else 0.0,
             "technologies": 0.20 if requested_technologies else 0.0,
-            "projects": 0.15 if requested_projects else 0.0,
+            "projects": 0.10 if requested_projects else 0.0,
+            "education": 0.10 if requested_education else 0.0,
             "experience": 0.20 if query.min_experience_years else 0.0,
             "query": 0.10,
         }
@@ -212,6 +239,7 @@ class RankingService:
             + skill_score * weights["skills"] / weight_total
             + technology_score * weights["technologies"] / weight_total
             + project_score * weights["projects"] / weight_total
+            + education_score * weights["education"] / weight_total
             + experience_score * weights["experience"] / weight_total
             + query_score * weights["query"] / weight_total
         )
@@ -264,6 +292,7 @@ class RankingService:
         candidate_text_parts.extend(candidate.get("technologies", []))
         candidate_text_parts.extend(candidate.get("projects", []))
         candidate_text_parts.extend(candidate.get("roles", []))
+        candidate_text_parts.extend(candidate.get("education", []))
 
         if candidate.get("summary"):
             candidate_text_parts.append(candidate["summary"])

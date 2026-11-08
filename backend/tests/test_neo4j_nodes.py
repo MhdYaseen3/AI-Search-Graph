@@ -2,7 +2,14 @@ from datetime import datetime
 
 import pytest
 
-from app.db.nodes import CandidateNode, ProjectNode, SkillNode, TechnologyNode
+from app.db.nodes import (
+    CandidateNode,
+    NODE_CONSTRAINTS,
+    ProjectNode,
+    SCHEMA_MIGRATIONS,
+    SkillNode,
+    TechnologyNode,
+)
 from app.models import Candidate, Project, Skill, Technology
 
 
@@ -11,6 +18,7 @@ def test_candidate_node_domain_round_trip() -> None:
         id="cand-1",
         full_name="Jane Doe",
         email="jane@example.com",
+        source="gmail",
         created_at=datetime(2024, 1, 1, 12, 0, 0),
         updated_at=datetime(2024, 1, 2, 12, 0, 0),
     )
@@ -21,6 +29,7 @@ def test_candidate_node_domain_round_trip() -> None:
     assert restored.id == candidate.id
     assert restored.full_name == candidate.full_name
     assert restored.email == candidate.email
+    assert restored.source == "gmail"
 
 
 def test_candidate_node_from_neo4j_mapping() -> None:
@@ -75,3 +84,30 @@ def test_technology_node_from_neo4j_mapping() -> None:
 )
 def test_node_unique_properties(node_cls, unique_property) -> None:
     assert node_cls.unique_property == unique_property
+
+
+def test_gmail_import_constraints_and_migration_are_additive():
+    assert any(
+        "GmailAttachment" in statement
+        and "message_id, a.attachment_id" in statement
+        for statement in NODE_CONSTRAINTS
+    )
+    assert any(
+        "GmailAttachmentHash" in statement
+        and "h.sha256 IS UNIQUE" in statement
+        for statement in NODE_CONSTRAINTS
+    )
+    migration = "\n".join(SCHEMA_MIGRATIONS)
+    assert "MATCH (a:GmailAttachment)" in migration
+    assert "SET a.status" in migration
+    assert "toString(datetime())" in migration
+    assert "datetime().toString()" not in migration
+    assert "DELETE" not in migration.upper()
+
+
+def test_job_application_id_has_a_uniqueness_constraint():
+    assert any(
+        "JobApplication" in statement
+        and "a.id IS UNIQUE" in statement
+        for statement in NODE_CONSTRAINTS
+    )

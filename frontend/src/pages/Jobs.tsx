@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Search as SearchIcon,
   Plus,
@@ -18,7 +19,6 @@ import { CreateJobForm } from '../components/CreateJobForm';
 
 export const Jobs: React.FC = () => {
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [filteredJobs, setFilteredJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<JobStatus | 'All'>('All');
@@ -26,45 +26,33 @@ export const Jobs: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchJobs();
+    let active = true;
+    jobService.getAllJobs().then((data) => {
+      if (active) setJobs(data);
+    }).catch((err: unknown) => {
+      console.error('Failed to load jobs', err);
+      if (active) setError('Failed to load jobs. Please try again.');
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const fetchJobs = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await jobService.getAllJobs();
-      setJobs(data);
-    } catch (err) {
-      console.error('Failed to load jobs', err);
-      setError('Failed to load jobs. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Apply filters client-side
-  useEffect(() => {
-    let filtered = [...jobs];
-
-    // Filter by status
-    if (statusFilter !== 'All') {
-      filtered = filtered.filter(job => job.status === statusFilter);
-    }
-
-    // Filter by search query
+  const filteredJobs = jobs.filter((job) => {
+    if (statusFilter !== 'All' && job.status !== statusFilter) return false;
     if (searchQuery.trim()) {
       const lowerQuery = searchQuery.toLowerCase();
-      filtered = filtered.filter(job =>
+      return (
         job.title.toLowerCase().includes(lowerQuery) ||
         job.description.toLowerCase().includes(lowerQuery) ||
         job.requiredSkills.some(s => s.toLowerCase().includes(lowerQuery)) ||
         job.location.toLowerCase().includes(lowerQuery)
       );
     }
-
-    setFilteredJobs(filtered);
-  }, [jobs, statusFilter, searchQuery]);
+    return true;
+  });
 
   const handleCreateJob = async (input: CreateJobInput) => {
     try {
@@ -72,9 +60,10 @@ export const Jobs: React.FC = () => {
       setJobs(prev => [newJob, ...prev]);
       setShowCreateModal(false);
       setError(null);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Failed to create job', err);
       setError('Failed to create job. Please try again.');
+      throw err;
     }
   };
 
@@ -85,6 +74,7 @@ export const Jobs: React.FC = () => {
 
   const formatSalary = (salary?: Job['salary']) => {
     if (!salary) return 'Not specified';
+    if (typeof salary === 'string') return salary;
     if (salary.min && salary.max) {
       return `${salary.currency} ${salary.min.toLocaleString()} - ${salary.max.toLocaleString()}`;
     }
@@ -365,9 +355,9 @@ const JobCard: React.FC<JobCardProps> = ({ job, formatSalary, formatDate }) => {
             <Calendar size={12} />
             Posted {formatDate(job.createdAt)}
           </span>
-          <button className="text-brand-500 hover:text-brand-400 text-xs font-semibold transition-colors">
+          <Link to={`/jobs/${job.id}`} className="text-brand-500 hover:text-brand-400 text-xs font-semibold transition-colors">
             View Details →
-          </button>
+          </Link>
         </div>
       </div>
     </div>

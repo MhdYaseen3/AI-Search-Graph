@@ -9,6 +9,7 @@ class CandidateCreate(BaseModel):
     summary: str | None = None
     resume_file_path: str | None = None
     raw_text: str | None = None
+    source: str | None = None
     skills: list[str] = Field(default_factory=list)
 
 
@@ -20,6 +21,7 @@ class CandidateUpdate(BaseModel):
     summary: str | None = None
     resume_file_path: str | None = None
     raw_text: str | None = None
+    source: str | None = None
     skills: list[str] | None = None
 
 
@@ -34,6 +36,7 @@ class CandidateResponse(BaseModel):
     summary: str | None = None
     resume_file_path: str | None = None
     raw_text: str | None = None
+    source: str | None = None
     skills: list[str] = Field(default_factory=list)
 
 class CandidateListResponse(BaseModel):

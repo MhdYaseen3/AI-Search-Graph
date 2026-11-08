@@ -22,6 +22,8 @@ class EducationNode(GraphNode):
     institution: str
     degree: str | None = None
     field_of_study: str | None = None
+    expected_graduation: str | None = None
+    cgpa: str | None = None
     start_date: str | None = None
     end_date: str | None = None
 
@@ -44,6 +46,8 @@ class EducationNode(GraphNode):
             institution=props["institution"],
             degree=props.get("degree"),
             field_of_study=props.get("field_of_study"),
+            expected_graduation=props.get("expected_graduation"),
+            cgpa=props.get("cgpa"),
             start_date=props.get("start_date"),
             end_date=props.get("end_date"),
             created_at=_parse_neo4j_datetime(
@@ -60,6 +64,8 @@ class EducationNode(GraphNode):
             "institution": self.institution,
             "degree": self.degree,
             "field_of_study": self.field_of_study,
+            "expected_graduation": self.expected_graduation,
+            "cgpa": self.cgpa,
             "start_date": self.start_date,
             "end_date": self.end_date,
             "created_at": _serialize_datetime(

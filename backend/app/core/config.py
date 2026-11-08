@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     google_client_secret: str =os.getenv("GOOGLE_CLIENT_SECRET")
     google_redirect_uri: str = "http://localhost:8000/api/v1/gmail/callback"
     gmail_scopes: str = "https://www.googleapis.com/auth/gmail.readonly"
+    frontend_origin: str = "http://localhost:5173"
 
     # ------------------------------------------------------------------
     # File Upload

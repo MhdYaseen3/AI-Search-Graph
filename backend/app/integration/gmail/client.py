@@ -6,6 +6,12 @@ from app.core.config import settings
 import base64
 from pathlib import Path
 
+DEFAULT_RESUME_QUERY = (
+    "has:attachment filename:pdf "
+    "(filename:resume OR filename:cv OR subject:resume OR subject:cv "
+    'OR subject:"curriculum vitae")'
+)
+
 
 class GmailClient:
     """Client for interacting with the Gmail API."""
@@ -40,16 +46,24 @@ class GmailClient:
             credentials=self.credentials,
         )
 
-    def list_messages(self, max_results: int = 10) -> list[dict]:
+    def list_messages(
+        self,
+        max_results: int = 10,
+        query: str | None = None,
+    ) -> list[dict]:
         """Return basic information about recent Gmail messages."""
+
+        list_kwargs: dict = {
+            "userId": "me",
+            "maxResults": max_results,
+        }
+        if query:
+            list_kwargs["q"] = query
 
         response = (
             self.service.users()
             .messages()
-            .list(
-                userId="me",
-                maxResults=max_results,
-            )
+            .list(**list_kwargs)
             .execute()
         )
 
@@ -93,16 +107,24 @@ class GmailClient:
 
         return results
 
-    def list_attachments(self, max_results: int = 10) -> list[dict]:
+    def list_attachments(
+        self,
+        max_results: int = 10,
+        query: str | None = None,
+    ) -> list[dict]:
         """Find attachments in recent Gmail messages."""
+
+        list_kwargs: dict = {
+            "userId": "me",
+            "maxResults": max_results,
+        }
+        if query:
+            list_kwargs["q"] = query
 
         response = (
             self.service.users()
             .messages()
-            .list(
-                userId="me",
-                maxResults=max_results,
-            )
+            .list(**list_kwargs)
             .execute()
         )
 
@@ -151,6 +173,7 @@ class GmailClient:
                     "filename": filename,
                     "mime_type": payload.get("mimeType"),
                     "attachment_id": body["attachmentId"],
+                    "size": body.get("size"),
                 }
             )
 
@@ -198,4 +221,92 @@ class GmailClient:
             file.write(file_data)
 
         return str(file_path)
+
+    def download_attachment_bytes(
+        self,
+        message_id: str,
+        attachment_id: str,
+    ) -> bytes:
+        """Download a Gmail attachment and return its decoded bytes."""
+
+        attachment = (
+            self.service.users()
+            .messages()
+            .attachments()
+            .get(
+                userId="me",
+                messageId=message_id,
+                id=attachment_id,
+            )
+            .execute()
+        )
+
+        data = attachment.get("data")
+
+        if not data:
+            raise ValueError("Attachment contains no data")
+
+        return base64.urlsafe_b64decode(data)
+
+    def search_resume_emails(
+        self,
+        query: str | None = None,
+        max_results: int = 20,
+    ) -> list[dict]:
+        """Search Gmail for resume-related messages and their attachments."""
+
+        search_query = (query or "").strip() or DEFAULT_RESUME_QUERY
+
+        response = (
+            self.service.users()
+            .messages()
+            .list(
+                userId="me",
+                maxResults=max_results,
+                q=search_query,
+            )
+            .execute()
+        )
+
+        messages = response.get("messages", [])
+        results = []
+
+        for message in messages:
+            message_id = message["id"]
+            message_data = (
+                self.service.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=message_id,
+                    format="full",
+                )
+                .execute()
+            )
+
+            payload = message_data.get("payload", {})
+            headers = {
+                header["name"].lower(): header["value"]
+                for header in payload.get("headers", [])
+            }
+            attachments: list[dict] = []
+            self._extract_attachments(
+                payload=payload,
+                message_id=message_id,
+                attachments=attachments,
+            )
+
+            results.append(
+                {
+                    "id": message_data["id"],
+                    "thread_id": message_data.get("threadId"),
+                    "subject": headers.get("subject", ""),
+                    "sender": headers.get("from", ""),
+                    "date": headers.get("date", ""),
+                    "snippet": message_data.get("snippet", ""),
+                    "attachments": attachments,
+                }
+            )
+
+        return results
 

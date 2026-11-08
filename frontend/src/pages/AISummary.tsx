@@ -1,22 +1,90 @@
 import React, { useEffect, useState } from 'react';
-import { 
-  Check, 
-  Users, 
+import {
+  Check,
+  Users,
   AlertCircle,
   Cpu,
-  Bookmark
+  Bookmark,
+  Loader2,
+  TrendingUp,
+  GitCompare
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { resumeService } from '../services/api';
-import type { Candidate, AISummaryReport } from '../types';
+import type { Candidate } from '../types';
+
+interface ComparisonData {
+  candidates: Array<{
+    candidate_id: string;
+    full_name: string;
+    email: string | null;
+    summary: string | null;
+    skills: string[];
+    technologies: string[];
+    projects: string[];
+    education: string[];
+    experiences: Array<{
+      company: string;
+      role: string | null;
+      start_date: string | null;
+      end_date: string | null;
+    }>;
+    experience_years: number | null;
+  }>;
+  metrics: Record<string, {
+    skill_overlap: number;
+    skill_coverage: number;
+    technology_overlap: number;
+    total_experience_diff: number | null;
+    project_count_diff: number;
+  }>;
+  ai_analysis: string | null;
+  recommendation: string | null;
+  error: string | null;
+}
+
+// Helper function to format experience display
+const formatExperience = (years: number | null): string => {
+  if (years === null) return 'Not available';
+  if (years === 0) return 'Less than 1 year';
+  if (years === 1) return '1 year';
+  return `${years} years`;
+};
+
+// Helper function to parse metric key and get readable label
+const getMetricLabel = (
+  metricKey: string,
+  metricValue: number,
+  candidates: ComparisonData['candidates']
+): { label: string; description: string } => {
+  const parts = metricKey.split('_vs_');
+  if (parts.length === 2) {
+    // Find candidate names by ID
+    const candA = candidates.find(c => c.candidate_id === parts[0]);
+    const candB = candidates.find(c => c.candidate_id === parts[1]);
+    const nameA = candA?.full_name || parts[0];
+    const nameB = candB?.full_name || parts[1];
+
+    return {
+      label: 'Skill Overlap',
+      description: `Shared skills between ${nameA} and ${nameB}: ${metricValue}%`
+    };
+  }
+  return {
+    label: 'Skill Overlap',
+    description: `Shared skills: ${metricValue}%`
+  };
+};
 
 export const AISummary: React.FC = () => {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Selected candidates for side-by-side comparison
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [comparisonReports, setComparisonReports] = useState<AISummaryReport[]>([]);
+  const [comparisonData, setComparisonData] = useState<ComparisonData | null>(null);
   const [loadingComparison, setLoadingComparison] = useState(false);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadCandidates = async () => {
@@ -36,26 +104,27 @@ export const AISummary: React.FC = () => {
     loadCandidates();
   }, []);
 
-  // Fetch AI reports for selected candidates
+  // Fetch comparison data for selected candidates
   useEffect(() => {
-    const fetchComparisonReports = async () => {
+    const fetchComparisonData = async () => {
       if (selectedIds.length === 0) {
-        setComparisonReports([]);
+        setComparisonData(null);
+        setComparisonError(null);
         return;
       }
       setLoadingComparison(true);
+      setComparisonError(null);
       try {
-        const reports = await Promise.all(
-          selectedIds.map(id => resumeService.getAISummary(id))
-        );
-        setComparisonReports(reports);
+        const comparison = await resumeService.compareCandidates(selectedIds);
+        setComparisonData(comparison);
       } catch (err) {
-        console.error('Failed to fetch AI reports for comparison', err);
+        console.error('Failed to fetch comparison data', err);
+        setComparisonError('Failed to load comparison data. Please try again.');
       } finally {
         setLoadingComparison(false);
       }
     };
-    fetchComparisonReports();
+    fetchComparisonData();
   }, [selectedIds]);
 
   const toggleSelectCandidate = (id: string) => {
@@ -128,124 +197,181 @@ export const AISummary: React.FC = () => {
             <div className="glass-panel rounded-2xl p-6 h-80 animate-shimmer" />
             <div className="glass-panel rounded-2xl p-6 h-80 animate-shimmer" />
           </div>
-        ) : (
+        ) : comparisonError ? (
+          <div className="glass-panel rounded-2xl p-12 text-center max-w-md mx-auto space-y-4 border border-dark-border">
+            <AlertCircle size={32} className="text-red-500 mx-auto" />
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">Comparison Error</h3>
+              <p className="text-xs text-slate-400">{comparisonError}</p>
+            </div>
+          </div>
+        ) : comparisonData ? (
           <div className="space-y-6">
-            
+
             {/* COMPARATIVE CARDS GRID */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
-              {comparisonReports.map(report => {
-                const cand = candidates.find(c => c.id === report.candidateId);
-                if (!cand) return null;
+              {comparisonData.candidates.map(candidate => {
+                const cand = candidates.find(c => c.id === candidate.candidate_id);
+                const displayName = cand ? cand.currentRole : 'Candidate';
+
+                // Ensure we never display UUIDs as names
+                const displayNameClean = displayName.startsWith('cand-') || displayName.includes('uuid') ? 'Candidate' : displayName;
+                const nameClean = candidate.full_name && candidate.full_name.length > 30 ? candidate.full_name : candidate.full_name;
 
                 return (
-                  <div 
-                    key={report.candidateId} 
+                  <div
+                    key={candidate.candidate_id}
                     className="glass-panel rounded-2xl p-6 flex flex-col justify-between border border-dark-border/80 relative overflow-hidden"
                   >
-                    {/* Glowing card border accents based on recommendation */}
-                    {report.hiringRecommendation === 'Strong Hire' && (
-                      <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
-                    )}
-                    {report.hiringRecommendation === 'Hire' && (
-                      <div className="absolute top-0 left-0 right-0 h-1 bg-indigo-500" />
-                    )}
-
                     <div className="space-y-4">
-                      
+
                       {/* Title & Core match */}
                       <div className="flex items-start justify-between">
                         <div>
-                          <h3 className="text-base font-extrabold text-white">{report.candidateName}</h3>
-                          <span className="text-xs text-brand-400 font-semibold">{cand.currentRole}</span>
+                          <h3 className="text-base font-extrabold text-white">{nameClean || 'Candidate'}</h3>
+                          <span className="text-xs text-brand-400 font-semibold">{displayNameClean}</span>
                         </div>
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          report.hiringRecommendation === 'Strong Hire' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                          'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
-                        }`}>
-                          {report.hiringRecommendation}
-                        </span>
                       </div>
 
                       {/* Score metrics */}
                       <div className="grid grid-cols-3 gap-2 py-3 border-t border-b border-dark-border/40 text-center">
                         <div>
-                          <span className="text-[9px] text-slate-500 uppercase font-semibold">Match Rating</span>
-                          <p className="text-sm font-extrabold text-white mt-0.5">{report.matchScore}%</p>
+                          <span className="text-[9px] text-slate-500 uppercase font-semibold">Skills</span>
+                          <p className="text-sm font-extrabold text-white mt-0.5">{candidate.skills.length}</p>
                         </div>
                         <div>
-                          <span className="text-[9px] text-slate-500 uppercase font-semibold">Skills Align</span>
-                          <p className="text-sm font-extrabold text-indigo-400 mt-0.5">{report.skillMatchPercent}%</p>
+                          <span className="text-[9px] text-slate-500 uppercase font-semibold">Projects</span>
+                          <p className="text-sm font-extrabold text-indigo-400 mt-0.5">{candidate.projects.length}</p>
                         </div>
                         <div>
-                          <span className="text-[9px] text-slate-500 uppercase font-semibold">Culture Fit</span>
-                          <p className="text-sm font-extrabold text-emerald-400 mt-0.5">{report.cultureFitPercent}%</p>
+                          <span className="text-[9px] text-slate-500 uppercase font-semibold">Experience</span>
+                          <p className="text-sm font-extrabold text-emerald-400 mt-0.5">{formatExperience(candidate.experience_years)}</p>
                         </div>
                       </div>
 
-                      {/* Strengths lists */}
+                      {/* Skills list */}
                       <div className="space-y-2.5">
-                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-bold block">Top Skill Strengths</span>
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-bold block">Skills</span>
                         <ul className="space-y-1.5 text-xs text-slate-300">
-                          {report.strengths.slice(0, 3).map((str, idx) => (
+                          {candidate.skills.slice(0, 5).map((skill, idx) => (
                             <li key={idx} className="flex gap-1.5 items-start">
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0 mt-1.5" />
-                              <span className="leading-snug">{str}</span>
+                              <span className="leading-snug">{skill}</span>
                             </li>
                           ))}
+                          {candidate.skills.length > 5 && (
+                            <li className="text-xs text-slate-500 italic">
+                              +{candidate.skills.length - 5} more skills
+                            </li>
+                          )}
                         </ul>
                       </div>
 
-                      {/* Gaps lists */}
+                      {/* Technologies list */}
                       <div className="space-y-2.5 pt-2">
-                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-bold block">Assessed Talent Gaps</span>
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-bold block">Technologies</span>
                         <ul className="space-y-1.5 text-xs text-slate-300">
-                          {report.gaps.slice(0, 2).map((gap, idx) => (
+                          {candidate.technologies.slice(0, 4).map((tech, idx) => (
                             <li key={idx} className="flex gap-1.5 items-start">
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 mt-1.5" />
-                              <span className="leading-snug">{gap}</span>
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0 mt-1.5" />
+                              <span className="leading-snug">{tech}</span>
                             </li>
                           ))}
+                          {candidate.technologies.length > 4 && (
+                            <li className="text-xs text-slate-500 italic">
+                              +{candidate.technologies.length - 4} more technologies
+                            </li>
+                          )}
                         </ul>
                       </div>
 
                     </div>
 
-                    {/* Reasoning snippet */}
-                    <div className="mt-6 pt-4 border-t border-dark-border/40 text-xs text-slate-400 leading-relaxed italic">
-                      &ldquo;{report.reasoning.slice(0, 150)}...&rdquo;
-                    </div>
+                    {/* Summary snippet */}
+                    {candidate.summary && (
+                      <div className="mt-6 pt-4 border-t border-dark-border/40 text-xs text-slate-400 leading-relaxed italic">
+                        &ldquo;{candidate.summary.slice(0, 120)}...&rdquo;
+                      </div>
+                    )}
 
                   </div>
                 );
               })}
             </div>
 
-            {/* INTEGRATIVE DYNAMIC SUMMARY SUMMARY */}
+            {/* INTEGRATIVE DYNAMIC SUMMARY */}
             <section className="glass-panel rounded-3xl p-6 border border-dark-border/80 bg-gradient-to-br from-dark-card to-brand-950/10">
               <div className="flex items-center gap-2 border-b border-dark-border/40 pb-4 mb-4">
                 <Cpu className="text-brand-500" size={20} />
-                <h3 className="text-sm font-extrabold text-white uppercase tracking-wider">Comparative Pipeline Recommendation</h3>
+                <h3 className="text-sm font-extrabold text-white uppercase tracking-wider">Comparative Analysis</h3>
               </div>
 
               <div className="space-y-4 text-xs text-slate-300 leading-relaxed font-normal">
-                <p>
-                  Analyzing the selected talent profiles shows strong matches against standard templates. 
-                  {comparisonReports[0] && comparisonReports[1] && (
-                    <span>
-                      {' '}Comparing <strong>{comparisonReports[0].candidateName}</strong> against <strong>{comparisonReports[1].candidateName}</strong>, the former offers higher skill alignment for core computational libraries ({comparisonReports[0].skillMatchPercent}% vs {comparisonReports[1].skillMatchPercent}%), while the latter shows excellent adaptability under collaborative corporate structures.
-                    </span>
-                  )}
-                </p>
-                <div className="p-4 rounded-2xl bg-slate-900 border border-dark-border text-slate-400 flex items-start gap-2.5">
-                  <AlertCircle size={16} className="text-brand-500 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-white block mb-0.5">Integration Suggestion</span>
-                    <span>For engineering vacancies, prioritize candidates displaying match indexes &gt; 90% and lower relationship gaps. Leverage the suggested interview guide tags to drill into custom fine-tuning questions.</span>
+                {comparisonData.ai_analysis ? (
+                  <div className="prose prose-invert prose-sm max-w-none">
+                    <ReactMarkdown>{comparisonData.ai_analysis}</ReactMarkdown>
                   </div>
-                </div>
+                ) : (
+                  <p>AI comparative analysis unavailable. Objective metrics are shown below.</p>
+                )}
+
+                {/* Show objective metrics with better labels */}
+                {Object.keys(comparisonData.metrics).length > 0 && (
+                  <div className="p-4 rounded-2xl bg-slate-900 border border-dark-border text-slate-400">
+                    <div className="flex items-center gap-2 mb-3">
+                      <GitCompare size={16} className="text-brand-500" />
+                      <span className="text-[10px] uppercase font-bold text-white">Objective Comparison Metrics</span>
+                    </div>
+                    <div className="space-y-3">
+                      {Object.entries(comparisonData.metrics).map(([key, metric]) => {
+                        const { label, description } = getMetricLabel(key, metric.skill_overlap, comparisonData.candidates);
+                        return (
+                          <div key={key} className="space-y-1">
+                            <div className="flex justify-between items-center">
+                              <span className="text-[10px] font-semibold text-slate-300">{label}</span>
+                              <span className="text-white font-bold">{metric.skill_overlap}%</span>
+                            </div>
+                            <p className="text-[9px] text-slate-500 leading-snug">{description}</p>
+                            {metric.skill_coverage !== metric.skill_overlap && (
+                              <div className="flex justify-between items-center mt-1">
+                                <span className="text-[10px] text-slate-400">Skill Coverage</span>
+                                <span className="text-brand-400 font-semibold">{metric.skill_coverage}%</span>
+                              </div>
+                            )}
+                            {metric.technology_overlap > 0 && (
+                              <div className="flex justify-between items-center mt-1">
+                                <span className="text-[10px] text-slate-400">Technology Overlap</span>
+                                <span className="text-indigo-400 font-semibold">{metric.technology_overlap}%</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recommendation */}
+                {comparisonData.recommendation && (
+                  <div className="p-4 rounded-2xl bg-slate-900 border border-dark-border text-slate-400 flex items-start gap-2.5">
+                    <TrendingUp size={16} className="text-brand-500 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <span className="text-[10px] uppercase font-bold text-white block mb-1.5">Hiring Recommendation</span>
+                      <p className="text-xs leading-relaxed">{comparisonData.recommendation}</p>
+                    </div>
+                  </div>
+                )}
               </div>
             </section>
 
+          </div>
+        ) : (
+          <div className="glass-panel rounded-2xl p-12 text-center max-w-md mx-auto space-y-4 border border-dark-border">
+            <Loader2 size={32} className="text-slate-600 mx-auto animate-spin" />
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">Loading Comparison</h3>
+              <p className="text-xs text-slate-400">Fetching candidate comparison data...</p>
+            </div>
           </div>
         )
       ) : (

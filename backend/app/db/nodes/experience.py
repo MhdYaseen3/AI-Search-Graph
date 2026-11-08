@@ -22,6 +22,7 @@ class ExperienceNode(GraphNode):
     company: str
     role: str | None = None
     description: str | None = None
+    duration: str | None = None
     start_date: str | None = None
     end_date: str | None = None
 
@@ -44,6 +45,7 @@ class ExperienceNode(GraphNode):
             company=props["company"],
             role=props.get("role"),
             description=props.get("description"),
+            duration=props.get("duration"),
             start_date=props.get("start_date"),
             end_date=props.get("end_date"),
             created_at=_parse_neo4j_datetime(
@@ -60,6 +62,7 @@ class ExperienceNode(GraphNode):
             "company": self.company,
             "role": self.role,
             "description": self.description,
+            "duration": self.duration,
             "start_date": self.start_date,
             "end_date": self.end_date,
             "created_at": _serialize_datetime(

@@ -8,6 +8,7 @@ class MatchBreakdown(BaseModel):
     skill_match: bool = False
     technology_match: bool = False
     project_match: bool = False
+    education_match: bool = False
 
 
 class SearchQuery(BaseModel):
@@ -16,6 +17,7 @@ class SearchQuery(BaseModel):
     skills: list[str] = Field(default_factory=list)
     technologies: list[str] = Field(default_factory=list)
     projects: list[str] = Field(default_factory=list)
+    education: list[str] = Field(default_factory=list)
     min_experience_years: float | None = None
     limit: int = 20
 
@@ -29,6 +31,7 @@ class RankedCandidate(BaseModel):
     matched_skills: list[str] = Field(default_factory=list)
     matched_technologies: list[str] = Field(default_factory=list)
     matched_projects: list[str] = Field(default_factory=list)
+    matched_education: list[str] = Field(default_factory=list)
     match_breakdown: MatchBreakdown = Field(default_factory=MatchBreakdown)
     explanation: str | None = None
     summary: str | None = None
@@ -41,6 +44,7 @@ class SearchResponse(BaseModel):
     parsed_skills: list[str] = Field(default_factory=list)
     parsed_technologies: list[str] = Field(default_factory=list)
     parsed_projects: list[str] = Field(default_factory=list)
+    parsed_education: list[str] = Field(default_factory=list)
     min_experience_years: float | None = None
     results: list[RankedCandidate] = Field(default_factory=list)
 

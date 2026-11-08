@@ -81,7 +81,7 @@ class Neo4jConnection:
             }
 
     async def initialize_schema(self) -> None:
-        """Apply uniqueness constraints and indexes for graph node models."""
+        """Run idempotent data migrations, then apply constraints and indexes."""
         for statement in SCHEMA_STATEMENTS:
             try:
                 await self.execute_write(statement)
@@ -145,6 +145,13 @@ class Neo4jConnection:
             return await result.data()
 
         return await self._run_in_transaction(_work, write=True)
+
+    async def execute_write_transaction(
+        self,
+        work: Callable[[AsyncTransaction], Awaitable[T]],
+    ) -> T:
+        """Run related graph writes atomically in one managed transaction."""
+        return await self._run_in_transaction(work, write=True)
 
 
 _neo4j_connection = Neo4jConnection()

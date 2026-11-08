@@ -7,5 +7,6 @@ class Experience(BaseEntity):
     company: str
     role: str | None = None
     description: str | None = None
+    duration: str | None = None
     start_date: str | None = None
     end_date: str | None = None

@@ -41,6 +41,8 @@ SECTION_SYNONYMS: Dict[str, List[str]] = {
         "skills & tools",
         "technologies",
         "technical proficiencies",
+        "competencies",
+        "core competencies",
     ],
     "projects": [
         "projects",
@@ -48,6 +50,8 @@ SECTION_SYNONYMS: Dict[str, List[str]] = {
         "academic projects",
         "project experience",
         "key projects",
+        "selected projects",
+        "professional projects",
     ],
     "education": [
         "education",
@@ -55,6 +59,7 @@ SECTION_SYNONYMS: Dict[str, List[str]] = {
         "educational qualification",
         "educational qualifications",
         "academics",
+        "educational background",
     ],
     "experience": [
         "experience",
@@ -64,11 +69,62 @@ SECTION_SYNONYMS: Dict[str, List[str]] = {
         "internship experience",
         "internships",
         "work history",
-        "INTERNSHIP EXPERIENCE",
+        "career history",
         "professional history",
+        "employment",
+        "career",
+        "relevant experience",
     ],
-    "summary": ["summary", "objective", "profile", "about me", "career objective"],
-    "certifications": ["certifications", "certificates", "licenses & certifications"],
+    "summary": [
+        "summary",
+        "professional summary",
+        "profile",
+        "professional profile",
+        "about me",
+        "objective",
+        "career objective",
+        "career summary",
+    ],
+    "certifications": [
+        "certifications",
+        "certificates",
+        "licenses & certifications",
+        "professional certifications",
+        "courses",
+        "training",
+    ],
+    "achievements": [
+        "achievements",
+        "awards",
+        "honors",
+        "accomplishments",
+        "recognition",
+    ],
+    "languages": [
+        "languages",
+        "language proficiency",
+        "language skills",
+        "languages known",
+    ],
+    "publications": [
+        "publications",
+        "papers",
+        "research",
+    ],
+    "volunteering": [
+        "volunteering",
+        "volunteer experience",
+        "volunteer work",
+    ],
+    "leadership": [
+        "leadership",
+        "leadership experience",
+    ],
+    "extracurricular": [
+        "extracurricular",
+        "extracurricular activities",
+        "activities",
+    ],
 }
 
 # Canonical technology/tool keyword bank: lowercase match key -> clean
@@ -96,6 +152,7 @@ TECH_KEYWORD_DISPLAY: Dict[str, str] = {
     "deep learning": "Deep Learning", "nlp": "NLP", "data analysis": "Data Analysis",
     "rest api": "REST API", "graphql": "GraphQL", "microservices": "Microservices",
     "pymupdf": "PyMuPDF", "ollama": "Ollama",
+        "iot": "IoT", "ai": "AI",
 }
 
 DEGREE_KEYWORDS_PATTERN = re.compile(
@@ -142,15 +199,10 @@ class ResumeParserService:
         text = (raw_text or "").replace("\r\n", "\n").replace("\r", "\n")
         sections = self._split_sections(text)
 
-        print("\n========== SECTIONS ==========")
-        for name, content in sections.items():
-            print(f"\n--- {name} ---")
-            print(content[:2000])
-        print("========== END SECTIONS ==========\n")
-        
         candidate_name = self._safe(self._extract_name, text)
         email = self._safe(self._extract_email, text)
         phone = self._safe(self._extract_phone, text)
+        summary = self._safe(self._extract_summary, sections)
         skills = self._safe(self._extract_skills, sections, text) or []
         projects = self._safe(self._extract_projects, sections) or []
         education = self._safe(
@@ -163,9 +215,6 @@ class ResumeParserService:
             sections,
         ) or []
 
-        print("EXPERIENCE RESULT:")
-        print(experiences)
-        
         technologies = self._safe(
             self._extract_technologies,
             text,
@@ -176,6 +225,7 @@ class ResumeParserService:
             candidate_name=candidate_name,
             email=email,
             phone=phone,
+            summary=summary,
             skills=skills,
             projects=projects,
             education=education,
@@ -194,10 +244,22 @@ class ResumeParserService:
         current = "header"
 
         for line in lines:
-            canonical = self._match_header(line)
-            if canonical:
-                current = canonical
-                sections.setdefault(current, [])
+            inline_headers = self._find_inline_headers(line)
+            if inline_headers:
+                prefix = line[: inline_headers[0][0]].strip()
+                if prefix:
+                    sections.setdefault(current, []).append(prefix)
+                for index, (start, end, canonical) in enumerate(inline_headers):
+                    current = canonical
+                    sections.setdefault(current, [])
+                    next_start = (
+                        inline_headers[index + 1][0]
+                        if index + 1 < len(inline_headers)
+                        else len(line)
+                    )
+                    content = line[end:next_start].strip()
+                    if content:
+                        sections[current].append(content)
             else:
                 sections.setdefault(current, []).append(line)
 
@@ -207,11 +269,44 @@ class ResumeParserService:
         stripped = line.strip().strip(":").strip()
         if not stripped or len(stripped) > 40 or len(stripped.split()) > 5:
             return None
-        normalized = re.sub(r"[^a-z0-9 &/]", "", stripped.lower()).strip()
+        normalized = self._normalize_heading(stripped)
+
+        # Try exact match first
         for canonical, synonyms in SECTION_SYNONYMS.items():
             if normalized in synonyms:
                 return canonical
+
         return None
+
+    def _normalize_heading(self, value: str) -> str:
+        return re.sub(r"[^a-z0-9 &/]", "", value.lower()).strip()
+
+    def _find_inline_headers(self, line: str) -> List[tuple[int, int, str]]:
+        """Find exact top-level headings, including adjacent headings on one line."""
+        stripped = line.strip().strip(":").strip()
+        if not stripped:
+            return []
+        normalized = self._normalize_heading(stripped)
+        headings = [
+            (synonym, canonical)
+            for canonical, synonyms in SECTION_SYNONYMS.items()
+            for synonym in synonyms
+        ]
+        headings.sort(key=lambda item: len(item[0]), reverse=True)
+        matches: List[tuple[int, int, str]] = []
+        for synonym, canonical in headings:
+            pattern = re.compile(rf"(?<![a-z]){re.escape(synonym)}(?![a-z])")
+            for match in pattern.finditer(normalized):
+                if any(match.start() >= start and match.end() <= end for start, end, _ in matches):
+                    continue
+                matches.append((match.start(), match.end(), canonical))
+        matches.sort()
+        if not matches:
+            return []
+        # A normal content line containing a word such as "experience" is not a header.
+        if len(matches) == 1 and self._match_header(stripped) is None:
+            return []
+        return matches
 
     # ------------------------------------------------------------------
     # Contact info
@@ -293,6 +388,10 @@ class ResumeParserService:
 
     def _find_known_keywords(self, text: str) -> List[str]:
         lowered = text.lower()
+        lowered = re.sub(r"\bnode\s+js\b", "node.js", lowered)
+        lowered = re.sub(r"\breact[,.]\s*js\b", "react.js", lowered)
+        lowered = re.sub(r"\blot\b", "iot", lowered)
+        lowered = re.sub(r"\bal\b", "ai", lowered)
         found = []
         for keyword, display_name in TECH_KEYWORD_DISPLAY.items():
             if re.search(rf"\b{re.escape(keyword)}\b", lowered):
@@ -330,25 +429,106 @@ class ResumeParserService:
         if not content:
             return []
 
-        chunks = self._split_into_entries(content)
-        education = []
-        for chunk in chunks:
-            degree_match = DEGREE_KEYWORDS_PATTERN.search(chunk)
-            institution = None
-            for line in chunk.split("\n"):
-                if INSTITUTION_KEYWORDS_PATTERN.search(line):
-                    name_match = INSTITUTION_NAME_PATTERN.search(line)
-                    institution = name_match.group(1).strip() if name_match else line.strip()
-                    break
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        entries: List[List[str]] = []
+        current: List[str] = []
+        for line in lines:
+            if current and DEGREE_KEYWORDS_PATTERN.search(line):
+                entries.append(current)
+                current = []
+            current.append(line)
+        if current:
+            entries.append(current)
 
-            education.append(
-                EducationItem(
-                    institution=institution,
-                    degree=degree_match.group(0).strip() if degree_match else None,
-                    raw_text=chunk.strip(),
-                )
+        education = []
+        for entry_lines in entries:
+            degree = next(
+                (line for line in entry_lines if DEGREE_KEYWORDS_PATTERN.search(line)),
+                None,
             )
+            institution = next(
+                (
+                    line
+                    for line in entry_lines
+                    if INSTITUTION_KEYWORDS_PATTERN.search(line)
+                ),
+                None,
+            )
+            field_of_study = next(
+                (
+                    line
+                    for line in entry_lines
+                    if line not in {degree, institution}
+                    and not re.search(
+                        r"\b(?:expected graduation|graduation|cgpa|gpa|from|to)\b|\d{4}",
+                        line,
+                        re.IGNORECASE,
+                    )
+                ),
+                None,
+            )
+            graduation_match = next(
+                (
+                    match
+                    for line in entry_lines
+                    if (match := re.search(
+                        r"(?:expected\s+graduation|graduation)\s*[:\-]?\s*(\d{4})",
+                        line,
+                        re.IGNORECASE,
+                    ))
+                ),
+                None,
+            )
+            cgpa_match = next(
+                (
+                    match
+                    for line in entry_lines
+                    if (match := re.search(
+                        r"(?:cgpa|gpa)\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?(?:\s*/\s*[0-9]+)?)",
+                        line,
+                        re.IGNORECASE,
+                    ))
+                ),
+                None,
+            )
+            if degree or institution:
+                education.append(
+                    EducationItem(
+                        institution=institution,
+                        degree=degree,
+                        field_of_study=field_of_study,
+                        expected_graduation=graduation_match.group(1) if graduation_match else None,
+                        cgpa=cgpa_match.group(1) if cgpa_match else None,
+                        raw_text="\n".join(entry_lines),
+                    )
+                )
         return education
+
+    # ------------------------------------------------------------------
+    # Summary / Profile / Objective
+    # ------------------------------------------------------------------
+
+    def _extract_summary(self, sections: Dict[str, str]) -> Optional[str]:
+        """Extract the summary/profile/objective text from the resume."""
+        content = sections.get("summary", "").strip()
+
+        if not content:
+            return None
+
+        # Take the first 500 characters of the summary section
+        # Remove leading/trailing whitespace and excessive newlines
+        lines = [line.strip() for line in content.split('\n') if line.strip()]
+        summary_text = ' '.join(lines)
+
+        # Limit to first 500 characters for reasonable length
+        if len(summary_text) > 500:
+            summary_text = summary_text[:500].rsplit(' ', 1)[0] + '...'
+
+        return summary_text if summary_text else None
+
+    # ------------------------------------------------------------------
+    # Experience
+    # ------------------------------------------------------------------
 
     def _extract_experience(
         self,
@@ -377,7 +557,7 @@ class ResumeParserService:
             # Company @ Role
             is_job_header = self._looks_like_experience_header(line)
 
-            if is_job_header and current_lines:
+            if is_job_header and current_lines and self._can_start_new_experience(current_lines, line):
                 experience = self._parse_experience_entry(current_lines)
 
                 if experience:
@@ -395,6 +575,31 @@ class ResumeParserService:
                 experiences.append(experience)
 
         return experiences
+
+    def _can_start_new_experience(self, current_lines: List[str], line: str) -> bool:
+        """Avoid splitting a company-only header from its following role line."""
+        clean = BULLET_PREFIX_PATTERN.sub("", line).strip()
+        if re.search(r"\s+[—–|@-]\s+", clean):
+            return True
+        if clean.isupper() and not re.search(r"\b(?:duration|present|19|20\d{2})\b", clean, re.IGNORECASE):
+            return True
+        first = BULLET_PREFIX_PATTERN.sub("", current_lines[0]).strip()
+        return not (
+            len(current_lines) == 1
+            and not self._has_role_keyword(first)
+            and self._has_role_keyword(clean)
+        )
+
+    def _has_role_keyword(self, value: str) -> bool:
+        return bool(
+            re.search(
+                r"\b(?:developer|engineer|intern|manager|designer|analyst|"
+                r"architect|consultant|administrator|specialist|lead|"
+                r"scientist|researcher|director|programmer)\b",
+                value,
+                re.IGNORECASE,
+            )
+        )
 
     def _looks_like_experience_header(self, line: str) -> bool:
         """Determine whether a line represents a new job/company header."""
@@ -431,12 +636,8 @@ class ResumeParserService:
             re.IGNORECASE,
         )
 
-        # If the line contains date information AND duration/date separators,
-        # it is almost certainly metadata for the previous job.
-        if (
-            date_pattern.search(clean)
-            or duration_pattern.search(clean)
-        ):
+        # Date lines are metadata for the preceding job.
+        if date_pattern.search(clean):
             return False
 
         # --------------------------------------------------
@@ -475,30 +676,66 @@ class ResumeParserService:
             return None
 
         header = BULLET_PREFIX_PATTERN.sub("", lines[0]).strip()
+        duration_match = re.search(
+            r"\bDuration\s*:\s*([^|,;]+?)(?=\s+(?:from|until|\d{4}|[—–-])|$)",
+            " ".join(lines[:2]),
+            re.IGNORECASE,
+        )
+        duration = duration_match.group(1).strip() if duration_match else None
+        header = re.sub(r"\s*Duration\s*:\s*[^|,;]+?(?=\s+(?:from|until|\d{4}|[—–-])|$)", "", header, flags=re.IGNORECASE).strip(" -|—–")
 
         company = None
         role = None
 
-        # Company — Role
+        # Try to split by common separators: Company — Role or Role — Company
         match = re.match(
             r"^(.*?)\s+[—–|@-]\s+(.*)$",
             header,
         )
 
         if match:
-            company = match.group(1).strip()
-            role = match.group(2).strip()
+            left = match.group(1).strip()
+            right = match.group(2).strip()
+
+            # Heuristic: Check which side looks like a role vs company
+            role_keywords = (
+                r"developer|engineer|intern|manager|designer|analyst|"
+                r"architect|consultant|specialist|lead|director|officer|associate|coordinator"
+            )
+            company_keywords = r"(inc|corp|co|ltd|llc|agency|studio|labs|group|ventures|solutions|systems|tech|startup|\bai\b)"
+
+            left_has_role = bool(re.search(rf"\b({role_keywords})\b", left, re.IGNORECASE))
+            left_has_company = bool(re.search(company_keywords, left, re.IGNORECASE))
+            right_has_role = bool(re.search(rf"\b({role_keywords})\b", right, re.IGNORECASE))
+            right_has_company = bool(re.search(company_keywords, right, re.IGNORECASE))
+
+            # Assign based on heuristics
+            if left_has_role and not left_has_company:
+                role = left
+                company = right
+            elif right_has_role and not right_has_company:
+                company = left
+                role = right
+            elif left_has_company and not left_has_role:
+                company = left
+                role = right
+            elif right_has_company and not right_has_role:
+                role = left
+                company = right
+            else:
+                # Default: assume "Company — Role" format
+                company = left
+                role = right
         else:
             role_keywords = (
                 r"developer|engineer|intern|manager|designer|analyst|"
                 r"architect|consultant|specialist|lead"
             )
 
-            if re.search(
-                rf"\b({role_keywords})\b",
-                header,
-                re.IGNORECASE,
-            ):
+            if len(lines) > 1 and self._has_role_keyword(lines[1]):
+                company = header
+                role = BULLET_PREFIX_PATTERN.sub("", lines[1]).strip()
+            elif re.search(rf"\b({role_keywords})\b", header, re.IGNORECASE):
                 role = header
             else:
                 company = header
@@ -509,7 +746,7 @@ class ResumeParserService:
         start_date = None
         end_date = None
 
-        date_text = " ".join(lines[:2])
+        date_text = " ".join(lines[:3])
 
         date_match = re.search(
             r"([A-Za-z]{3,9}\s+\d{4})"
@@ -536,6 +773,12 @@ class ResumeParserService:
             ):
                 continue
 
+            if re.search(r"\bDuration\s*:", line, re.IGNORECASE):
+                continue
+
+            if len(lines) > 1 and line == lines[1] and role == BULLET_PREFIX_PATTERN.sub("", line).strip():
+                continue
+
             cleaned = BULLET_PREFIX_PATTERN.sub(
                 "",
                 line,
@@ -554,6 +797,7 @@ class ResumeParserService:
             company=company,
             role=role,
             description=description,
+            duration=duration,
             start_date=start_date,
             end_date=end_date,
             raw_text="\n".join(lines),

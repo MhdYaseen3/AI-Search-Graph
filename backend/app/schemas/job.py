@@ -1,4 +1,15 @@
+from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
+
+ApplicationStatus = Literal[
+    "Applied",
+    "Shortlisted",
+    "Interview",
+    "Selected",
+    "Rejected",
+]
 
 
 class JobCreate(BaseModel):
@@ -38,6 +49,8 @@ class JobResponse(BaseModel):
     status: str
     salary: str | None = None
     created_by: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class JobListResponse(BaseModel):
@@ -45,3 +58,23 @@ class JobListResponse(BaseModel):
     skip: int
     limit: int
     items: list[JobResponse] = Field(default_factory=list)
+
+
+class JobApplicationCreate(BaseModel):
+    candidate_id: str
+
+
+class JobApplicationUpdate(BaseModel):
+    status: ApplicationStatus
+
+
+class JobApplicationResponse(BaseModel):
+    id: str
+    job_id: str
+    candidate_id: str
+    full_name: str
+    email: str | None = None
+    summary: str | None = None
+    status: ApplicationStatus
+    created_at: str
+    updated_at: str

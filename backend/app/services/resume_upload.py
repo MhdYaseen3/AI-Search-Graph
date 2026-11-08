@@ -1,6 +1,9 @@
 import logging
+import zipfile
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
+from xml.etree import ElementTree
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -80,6 +83,92 @@ class ResumeUploadService:
             character_count=extraction.character_count,
             text=extraction.text,
             uploaded_at=datetime.utcnow(),
+        )
+
+    async def upload_and_extract_gmail(
+        self,
+        file: UploadFile,
+        content: bytes,
+        candidate_id: str,
+    ) -> PDFUploadResponse:
+        """Validate and extract a Gmail PDF/DOCX without changing manual uploads."""
+        filename = file.filename or ""
+        if not filename or Path(filename).name != filename or any(
+            separator in filename for separator in ("/", "\\")
+        ):
+            raise ValidationError("A valid attachment filename is required")
+
+        extension = Path(filename).suffix.lower()
+        if extension not in {".pdf", ".docx"}:
+            raise ValidationError("Only PDF and DOCX attachments can be imported")
+        self._validate_size(content)
+        if not content:
+            raise ValidationError("Attachment is empty")
+
+        content_type = (file.content_type or "").lower()
+        allowed_types = {
+            ".pdf": {"", "application/pdf", "application/x-pdf", "application/octet-stream"},
+            ".docx": {
+                "",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/zip",
+                "application/octet-stream",
+            },
+        }
+        if content_type not in allowed_types[extension]:
+            raise ValidationError("Attachment type does not match its filename")
+
+        if extension == ".pdf":
+            if not content.startswith(b"%PDF-"):
+                raise ValidationError("Attachment is not a valid PDF")
+            extraction = await self.pdf_extractor.extract_from_bytes(
+                content,
+                source=filename,
+            )
+            text = extraction.text
+            page_count = extraction.page_count
+        else:
+            text = self.extract_docx_text(content)
+            page_count = 0
+
+        if not text.strip():
+            raise ValidationError("Attachment contains no extractable text")
+
+        file_path = self._persist_file(candidate_id, filename, content)
+        return PDFUploadResponse(
+            candidate_id=candidate_id,
+            file_name=filename,
+            file_path=str(file_path),
+            file_size_bytes=len(content),
+            page_count=page_count,
+            character_count=len(text),
+            text=text,
+            uploaded_at=datetime.utcnow(),
+        )
+
+    @staticmethod
+    def extract_docx_text(content: bytes) -> str:
+        try:
+            with zipfile.ZipFile(BytesIO(content)) as document:
+                document_xml_info = document.getinfo("word/document.xml")
+                if document_xml_info.file_size > settings.max_upload_size_bytes:
+                    raise ValidationError("DOCX document content is too large")
+                xml = ElementTree.fromstring(document.read("word/document.xml"))
+        except ValidationError:
+            raise
+        except (
+            KeyError,
+            OSError,
+            RuntimeError,
+            zipfile.BadZipFile,
+            ElementTree.ParseError,
+        ) as exc:
+            raise ValidationError("Attachment is not a valid DOCX document") from exc
+
+        namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+        return "\n".join(
+            "".join(node.itertext())
+            for node in xml.iter(f"{namespace}p")
         )
 
     def _persist_file(self, candidate_id: str, filename: str, content: bytes) -> Path:

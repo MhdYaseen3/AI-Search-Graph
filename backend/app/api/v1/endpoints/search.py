@@ -49,6 +49,7 @@ async def search_candidates(
         parsed_skills=parsed_query.skills,
         parsed_technologies=parsed_query.technologies,
         parsed_projects=parsed_query.projects,
+        parsed_education=parsed_query.education,
         min_experience_years=parsed_query.min_experience_years,
         results=ranked_results,
     )

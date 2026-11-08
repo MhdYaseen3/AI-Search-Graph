@@ -18,6 +18,9 @@ class SearchService:
     async def search(
         self,
         query: SearchQuery,
+        *,
+        include_nonmatching: bool = False,
+        skip: int = 0,
     ) -> list[dict[str, Any]]:
         """Search candidates using graph relationships and filters."""
         limit = min(
@@ -81,9 +84,18 @@ class SearchService:
             [candidate_role IN roles
              WHERE candidate_role IS NOT NULL
                 AND toLower(candidate_role) CONTAINS toLower($role)
-            ] AS matched_roles
+            ] AS matched_roles,
+
+            [requested IN $education
+             WHERE any(
+                 candidate_edu IN education
+                 WHERE toLower(candidate_edu) CONTAINS toLower(requested)
+             )
+            ] AS matched_education
 
         WHERE
+            $include_nonmatching
+            OR (
             (
                 size($skills) = 0
                 OR size(matched_skills) > 0
@@ -103,6 +115,12 @@ class SearchService:
                 $role IS NULL
                 OR size(matched_roles) > 0
             )
+            AND
+            (
+                size($education) = 0
+                OR size(matched_education) > 0
+            )
+            )
 
         RETURN
             c.id AS candidate_id,
@@ -119,8 +137,11 @@ class SearchService:
             matched_skills,
             matched_technologies,
             matched_projects,
-            matched_roles
+            matched_roles,
+            matched_education
 
+        ORDER BY c.id
+        SKIP $skip
         LIMIT $limit
         """
 
@@ -129,18 +150,22 @@ class SearchService:
             "skills": query.skills,
             "technologies": query.technologies,
             "projects": query.projects,
+            "education": query.education,
             "limit": limit,
+            "skip": skip,
+            "include_nonmatching": include_nonmatching,
         }
 
         logger.info(
             "Executing graph search. "
-            "query=%s role=%s skills=%s technologies=%s projects=%s "
+            "query=%s role=%s skills=%s technologies=%s projects=%s education=%s "
             "min_experience_years=%s",
             query.query,
             query.role,
             query.skills,
             query.technologies,
             query.projects,
+            query.education,
             query.min_experience_years,
         )
 
@@ -162,8 +187,8 @@ class SearchService:
                 experiences,
             )
 
-            if query.min_experience_years is not None:
-                if record["experience_years"] < query.min_experience_years:
+            if not include_nonmatching and query.min_experience_years is not None:
+                if record["experience_years"] is None or record["experience_years"] < query.min_experience_years:
                     continue
 
             results.append(record)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   ArrowLeft, 
   Mail, 
@@ -9,20 +9,26 @@ import {
   GitFork, 
   GraduationCap, 
   Briefcase,
-  CheckCircle,
-  HelpCircle,
-  FileText
+  FileText,
+  Trash2
 } from 'lucide-react';
 import { resumeService } from '../services/api';
-import type { Candidate, AISummaryReport } from '../types';
+import type { Candidate, CandidateSummaryResponse } from '../types';
 
 export const CandidateDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const matchScoreParam = searchParams.get('matchScore');
+  const searchMatchScore = matchScoreParam !== null && /^\d+(\.\d+)?$/.test(matchScoreParam)
+    ? Number(matchScoreParam)
+    : null;
 
   const [candidate, setCandidate] = useState<Candidate | null>(null);
-  const [aiSummary, setAISummary] = useState<AISummaryReport | null>(null);
+  const [aiSummary, setAISummary] = useState<CandidateSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'ai-assessment'>('overview');
 
   useEffect(() => {
@@ -30,12 +36,15 @@ export const CandidateDetails: React.FC = () => {
       if (!id) return;
       setLoading(true);
       try {
-        const [candData, summaryData] = await Promise.all([
-          resumeService.getCandidateById(id),
-          resumeService.getAISummary(id)
-        ]);
+        const candData = await resumeService.getCandidateById(id);
         setCandidate(candData);
-        setAISummary(summaryData);
+        try {
+          const summaryData = await resumeService.getCandidateSummary(id);
+          setAISummary(summaryData);
+        } catch (summaryError) {
+          console.error('Candidate AI summary unavailable', summaryError);
+          setAISummary(null);
+        }
       } catch (err) {
         console.error('Failed to load candidate details', err);
       } finally {
@@ -44,6 +53,28 @@ export const CandidateDetails: React.FC = () => {
     };
     fetchCandidateDetails();
   }, [id]);
+
+  const handleDeleteCandidate = async () => {
+    if (!id || !candidate) return;
+    const confirmed = window.confirm(
+      `Delete ${candidate.name} and its candidate relationships? Shared graph entities will be preserved.`,
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setDeleteError(null);
+    let deleted = false;
+    try {
+      await resumeService.deleteCandidate(id);
+      deleted = true;
+    } catch (err) {
+      console.error(`Failed to delete candidate ${id}`, err);
+      setDeleteError('Candidate deletion failed. The candidate may already be missing; refresh and try again.');
+    } finally {
+      setDeleting(false);
+    }
+    if (deleted) navigate('/', { replace: true });
+  };
 
   if (loading) {
     return (
@@ -98,11 +129,11 @@ export const CandidateDetails: React.FC = () => {
         </div>
 
         {/* METRICS & QUICK ACTION GAUGE */}
-        <div className="flex items-center gap-6">
+        <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6">
           <div className="text-center">
             <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-semibold">Match Score</span>
             <div className="inline-flex items-center justify-center relative mt-1">
-              <svg className="w-14 h-14 transform -rotate-90">
+                {searchMatchScore !== null ? <svg className="w-14 h-14 transform -rotate-90">
                 <circle cx="28" cy="28" r="22" className="stroke-slate-800" strokeWidth="4" fill="transparent" />
                 <circle 
                   cx="28" 
@@ -112,10 +143,12 @@ export const CandidateDetails: React.FC = () => {
                   strokeWidth="4" 
                   fill="transparent" 
                   strokeDasharray={138.2}
-                  strokeDashoffset={138.2 - (138.2 * candidate.matchScore) / 100}
+                  strokeDashoffset={138.2 - (138.2 * searchMatchScore) / 100}
                 />
-              </svg>
-              <span className="absolute text-xs font-bold text-white">{candidate.matchScore}%</span>
+                </svg> : <div className="w-14 h-14 rounded-full border-4 border-slate-800 flex items-center justify-center" />}
+              <span className="absolute text-xs font-bold text-white">
+                {searchMatchScore !== null ? `${searchMatchScore}%` : 'N/A'}
+              </span>
             </div>
           </div>
 
@@ -134,9 +167,23 @@ export const CandidateDetails: React.FC = () => {
               <Sparkles size={14} className="text-brand-400" />
               <span>AI Summary</span>
             </button>
+            <button
+              type="button"
+              onClick={() => void handleDeleteCandidate()}
+              disabled={deleting}
+              className="bg-rose-950/60 hover:bg-rose-900/70 border border-rose-800/60 text-rose-300 disabled:opacity-50 text-xs font-semibold py-2 px-4 rounded-xl flex items-center gap-1.5 transition-colors"
+            >
+              <Trash2 size={14} />
+              <span>{deleting ? 'Deleting...' : 'Delete Candidate'}</span>
+            </button>
           </div>
         </div>
       </section>
+      {deleteError && (
+        <p role="alert" className="rounded-xl border border-rose-900/60 bg-rose-950/30 px-4 py-3 text-sm text-rose-300">
+          {deleteError}
+        </p>
+      )}
 
       {/* MAIN LAYOUT WITH LEFT DETAILS AND RIGHT SIDE CONTACTS CARD */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -176,7 +223,7 @@ export const CandidateDetails: React.FC = () => {
               <div className="glass-panel rounded-2xl p-6 space-y-3">
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider">Professional Profile</h3>
                 <p className="text-xs text-slate-300 leading-relaxed font-normal">
-                  {candidate.summary}
+                  {candidate.summary || 'No summary available.'}
                 </p>
               </div>
 
@@ -185,7 +232,7 @@ export const CandidateDetails: React.FC = () => {
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider">Employment History</h3>
                 
                 <div className="relative border-l border-dark-border/60 ml-3 pl-6 space-y-6 pt-2">
-                  {candidate.experience.map((exp, index) => (
+                  {candidate.experience.length > 0 ? candidate.experience.map((exp, index) => (
                     <div key={index} className="relative space-y-1">
                       {/* Timeline dot */}
                       <span className="absolute -left-[31px] top-1.5 w-3 h-3 rounded-full bg-brand-500 ring-4 ring-dark-bg" />
@@ -206,7 +253,7 @@ export const CandidateDetails: React.FC = () => {
                         {exp.description}
                       </p>
                     </div>
-                  ))}
+                  )) : <p className="text-xs text-slate-400">Employment history not available.</p>}
                 </div>
               </div>
 
@@ -215,18 +262,18 @@ export const CandidateDetails: React.FC = () => {
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider">Education</h3>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {candidate.education.map((edu, index) => (
+                  {candidate.education.length > 0 ? candidate.education.map((edu, index) => (
                     <div key={index} className="p-4 rounded-xl bg-slate-900/40 border border-dark-border/60 flex gap-3 items-start">
                       <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center shrink-0 mt-0.5">
                         <GraduationCap size={16} />
                       </div>
                       <div className="space-y-1">
-                        <h4 className="text-xs font-bold text-white leading-tight">{edu.degree}</h4>
+                        <h4 className="text-xs font-bold text-white leading-tight">{edu.degree || 'Degree not specified'}</h4>
                         <p className="text-[10px] text-slate-400">{edu.school}</p>
                         <span className="text-[9px] text-slate-500 font-semibold block">{edu.year}</span>
                       </div>
                     </div>
-                  ))}
+                  )) : <p className="text-xs text-slate-400">Education not available.</p>}
                 </div>
               </div>
 
@@ -235,95 +282,18 @@ export const CandidateDetails: React.FC = () => {
 
           {/* TAB CONTENT AI ASSESSMENT */}
           {activeTab === 'ai-assessment' && aiSummary && (
-            <div className="space-y-6">
-              
-              {/* STRENGTHS AND GAPS BARS */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                <div className="glass-panel rounded-xl p-4 space-y-1.5 text-center">
-                  <span className="text-[9px] text-slate-500 uppercase font-semibold">Experience Match</span>
-                  <div className="text-xl font-extrabold text-brand-400">{aiSummary.experienceMatchPercent}%</div>
-                  <div className="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden">
-                    <div className="h-full bg-brand-500" style={{ width: `${aiSummary.experienceMatchPercent}%` }} />
-                  </div>
-                </div>
-
-                <div className="glass-panel rounded-xl p-4 space-y-1.5 text-center">
-                  <span className="text-[9px] text-slate-500 uppercase font-semibold">Skill Set Alignment</span>
-                  <div className="text-xl font-extrabold text-indigo-400">{aiSummary.skillMatchPercent}%</div>
-                  <div className="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden">
-                    <div className="h-full bg-indigo-500" style={{ width: `${aiSummary.skillMatchPercent}%` }} />
-                  </div>
-                </div>
-
-                <div className="glass-panel rounded-xl p-4 space-y-1.5 text-center">
-                  <span className="text-[9px] text-slate-500 uppercase font-semibold">Cultural Fit Score</span>
-                  <div className="text-xl font-extrabold text-emerald-400">{aiSummary.cultureFitPercent}%</div>
-                  <div className="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden">
-                    <div className="h-full bg-emerald-500" style={{ width: `${aiSummary.cultureFitPercent}%` }} />
-                  </div>
-                </div>
+            <div className="glass-panel rounded-2xl p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-dark-border/40 pb-3">
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">AI Candidate Summary</h3>
+                <span className="text-[10px] text-slate-500">Source: {aiSummary.source}</span>
               </div>
+              <p className="text-xs text-slate-300 leading-relaxed">{aiSummary.summary || 'No summary available.'}</p>
+            </div>
+          )}
 
-              {/* CORE REASONING ASSESSMENTS */}
-              <div className="glass-panel rounded-2xl p-6 space-y-4">
-                <div className="flex items-center justify-between border-b border-dark-border/40 pb-3">
-                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">AI Evaluation Summary</h3>
-                  <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${
-                    aiSummary.hiringRecommendation === 'Strong Hire' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                    aiSummary.hiringRecommendation === 'Hire' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' :
-                    'bg-slate-800 text-slate-400'
-                  }`}>
-                    Recommendation: {aiSummary.hiringRecommendation}
-                  </span>
-                </div>
-                
-                <p className="text-xs text-slate-300 leading-relaxed font-normal">
-                  {aiSummary.reasoning}
-                </p>
-              </div>
-
-              {/* STRENGTHS AND GAPS BULLETS */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <div className="glass-panel rounded-2xl p-5 space-y-3">
-                  <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
-                    <CheckCircle size={14} /> Key Strengths
-                  </h4>
-                  <ul className="space-y-2 text-xs text-slate-300 list-disc list-inside">
-                    {aiSummary.strengths.map((str, idx) => (
-                      <li key={idx} className="leading-relaxed">{str}</li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="glass-panel rounded-2xl p-5 space-y-3">
-                  <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1">
-                    <HelpCircle size={14} /> Noted Experience Gaps
-                  </h4>
-                  <ul className="space-y-2 text-xs text-slate-300 list-disc list-inside">
-                    {aiSummary.gaps.map((gap, idx) => (
-                      <li key={idx} className="leading-relaxed">{gap}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-
-              {/* CUSTOM INTERVIEW QUESTIONS */}
-              <div className="glass-panel rounded-2xl p-6 space-y-4 bg-gradient-to-br from-dark-card to-brand-950/10">
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                  <Sparkles size={14} className="text-brand-500" />
-                  Suggested AI Behavioral Questions
-                </h3>
-                
-                <div className="space-y-3">
-                  {aiSummary.suggestedInterviewQuestions.map((q, idx) => (
-                    <div key={idx} className="p-3 rounded-xl bg-slate-900 border border-dark-border text-xs text-slate-200 flex gap-2">
-                      <span className="font-bold text-brand-500 shrink-0">Q{idx+1}:</span>
-                      <span className="leading-relaxed">{q}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
+          {activeTab === 'ai-assessment' && !aiSummary && (
+            <div className="glass-panel rounded-2xl p-6 text-sm text-slate-400">
+              AI assessment data is not available for this candidate.
             </div>
           )}
 
@@ -367,14 +337,22 @@ export const CandidateDetails: React.FC = () => {
               Skill Entities Matrix
             </h3>
             
-            <div className="flex flex-wrap gap-2">
-              {candidate.skills.map((skill) => (
-                <span 
-                  key={skill}
-                  className="px-2.5 py-1 rounded-lg bg-slate-900 border border-dark-border/80 text-[10px] text-slate-200 font-semibold shadow-sm hover:border-brand-500/40 transition-colors"
-                >
-                  {skill}
-                </span>
+            <div className="space-y-4">
+              {[
+                { label: 'Skills', values: candidate.skills },
+                { label: 'Technologies', values: candidate.technologies || [] },
+                { label: 'Projects', values: candidate.projects || [] },
+              ].map(({ label, values }) => (
+                <div key={label} className="space-y-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{label}</span>
+                  {values.length > 0 ? <div className="flex flex-wrap gap-2">
+                    {values.map((value) => (
+                      <span key={value} className="px-2.5 py-1 rounded-lg bg-slate-900 border border-dark-border/80 text-[10px] text-slate-200 font-semibold shadow-sm hover:border-brand-500/40 transition-colors">
+                        {value}
+                      </span>
+                    ))}
+                  </div> : <p className="text-xs text-slate-400">Not available.</p>}
+                </div>
               ))}
             </div>
           </div>

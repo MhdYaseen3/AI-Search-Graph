@@ -1,17 +1,18 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  UploadCloud, 
-  Search, 
-  GitFork, 
-  Sparkles, 
-  Settings, 
-  Menu, 
-  X, 
+import {
+  LayoutDashboard,
+  UploadCloud,
+  Search,
+  GitFork,
+  Sparkles,
+  Settings,
+  Menu,
+  X,
   Cpu,
   UserCheck,
-  Briefcase
+  Briefcase,
+  Mail
 } from 'lucide-react';
 
 interface SidebarLinkProps {
@@ -56,6 +57,7 @@ export const DashboardLayout: React.FC<{ children: React.ReactNode }> = ({ child
     if (path.startsWith('/candidate')) return 'Candidate Profile';
     if (path.startsWith('/graph')) return 'Relationship Explorer';
     if (path.startsWith('/ai-summary')) return 'AI Assessment Workspace';
+    if (path.startsWith('/gmail-import')) return 'Gmail Resume Import';
     if (path.startsWith('/settings')) return 'System Settings';
     return 'Knowledge Graph Search';
   };
@@ -88,6 +90,7 @@ export const DashboardLayout: React.FC<{ children: React.ReactNode }> = ({ child
             <SidebarLink to="/jobs" icon={<Briefcase size={20} />} label="Job Management" />
             <SidebarLink to="/graph" icon={<GitFork size={20} />} label="Relationship Graph" />
             <SidebarLink to="/ai-summary" icon={<Sparkles size={20} />} label="AI Summaries" />
+            <SidebarLink to="/gmail-import" icon={<Mail size={20} />} label="Gmail Import" />
             <SidebarLink to="/settings" icon={<Settings size={20} />} label="Settings" />
           </nav>
         </div>
@@ -135,6 +138,7 @@ export const DashboardLayout: React.FC<{ children: React.ReactNode }> = ({ child
                 <SidebarLink to="/jobs" icon={<Briefcase size={18} />} label="Job Management" onClick={() => setMobileMenuOpen(false)} />
                 <SidebarLink to="/graph" icon={<GitFork size={18} />} label="Relationship Graph" onClick={() => setMobileMenuOpen(false)} />
                 <SidebarLink to="/ai-summary" icon={<Sparkles size={18} />} label="AI Summaries" onClick={() => setMobileMenuOpen(false)} />
+                <SidebarLink to="/gmail-import" icon={<Mail size={18} />} label="Gmail Import" onClick={() => setMobileMenuOpen(false)} />
                 <SidebarLink to="/settings" icon={<Settings size={18} />} label="Settings" onClick={() => setMobileMenuOpen(false)} />
               </nav>
             </div>

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   UploadCloud, 
@@ -7,10 +7,11 @@ import {
   AlertCircle, 
   Terminal,
   GitFork,
-  User
+  User,
+  Mail
 } from 'lucide-react';
-import { resumeService } from '../services/api';
-import type { Candidate, UploadProgressLog } from '../types';
+import { gmailService, resumeService } from '../services/api';
+import type { Candidate, GmailResumeEmail, UploadProgressLog } from '../types';
 
 export const Upload: React.FC = () => {
   const [dragActive, setDragActive] = useState(false);
@@ -22,6 +23,179 @@ export const Upload: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const [gmailConnected, setGmailConnected] = useState(false);
+  const [gmailQuery, setGmailQuery] = useState('');
+  const [gmailEmails, setGmailEmails] = useState<GmailResumeEmail[]>([]);
+  const [gmailSearching, setGmailSearching] = useState(false);
+  const [gmailImporting, setGmailImporting] = useState(false);
+  const [gmailError, setGmailError] = useState<string | null>(null);
+  const [selectedAttachments, setSelectedAttachments] = useState<Record<string, boolean>>({});
+  const [gmailState, setGmailState] = useState<string | null>(null);
+
+  const attachmentKey = (messageId: string, attachmentId: string) =>
+    `${messageId}:${attachmentId}`;
+
+  useEffect(() => {
+    const savedState = sessionStorage.getItem('gmailOAuthState');
+    gmailService
+      .getStatus(savedState || undefined)
+      .then((status) => {
+        if (status.connected && savedState) {
+          setGmailConnected(true);
+          setGmailState(savedState);
+        } else {
+          sessionStorage.removeItem('gmailOAuthState');
+          setGmailConnected(false);
+          setGmailState(null);
+        }
+      })
+      .catch(() => setGmailConnected(false));
+  }, []);
+
+  const connectGmail = async () => {
+    setGmailError(null);
+    try {
+      const state = await gmailService.connect();
+      sessionStorage.setItem('gmailOAuthState', state);
+      setGmailState(state);
+      setGmailConnected(true);
+    } catch (err: unknown) {
+      setGmailError(err instanceof Error ? err.message : 'Failed to connect to Gmail');
+    }
+  };
+
+  const searchGmail = async () => {
+    if (!gmailState) {
+      setGmailError('Not authenticated. Please connect Gmail first.');
+      return;
+    }
+
+    setGmailSearching(true);
+    setGmailError(null);
+    setSelectedAttachments({});
+    try {
+      const attachments = await gmailService.searchResumeEmails(gmailState, gmailQuery);
+
+      // Convert attachments to email groups
+      const emailMap = new Map<string, GmailResumeEmail>();
+      attachments.forEach((att) => {
+        const key = att.message_id;
+        if (!emailMap.has(key)) {
+          emailMap.set(key, {
+            id: att.message_id,
+            subject: att.subject,
+            sender: att.sender,
+            date: att.date,
+            attachments: [],
+          });
+        }
+        emailMap.get(key)!.attachments.push({
+          ...att,
+          already_imported: false,
+        });
+      });
+
+      setGmailEmails(Array.from(emailMap.values()));
+      if (attachments.length === 0) {
+        setGmailError('No resume-related emails with attachments matched this search.');
+      }
+    } catch (err: unknown) {
+      setGmailEmails([]);
+      setGmailError(err instanceof Error ? err.message : 'Failed to search Gmail.');
+    } finally {
+      setGmailSearching(false);
+    }
+  };
+
+  const toggleAttachment = (messageId: string, attachmentId: string, disabled: boolean) => {
+    if (disabled) return;
+    const key = attachmentKey(messageId, attachmentId);
+    setSelectedAttachments((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const importSelectedGmailResumes = async () => {
+    if (!gmailState) {
+      setGmailError('Not authenticated. Please connect Gmail first.');
+      return;
+    }
+
+    const attachments = gmailEmails.flatMap((email) =>
+      email.attachments
+        .filter((attachment) => selectedAttachments[attachmentKey(attachment.message_id, attachment.attachment_id)])
+        .map((attachment) => ({
+          message_id: attachment.message_id,
+          attachment_id: attachment.attachment_id,
+          filename: attachment.filename,
+          size: attachment.size,
+          mime_type: attachment.mime_type,
+          subject: email.subject,
+          sender: email.sender,
+          date: email.date,
+          classification: attachment.classification,
+        })),
+    );
+
+    if (attachments.length === 0) {
+      setGmailError('Select at least one PDF attachment to import.');
+      return;
+    }
+
+    setGmailImporting(true);
+    setGmailError(null);
+    try {
+      const result = await gmailService.importAttachments(gmailState, attachments);
+
+      if (result.success_count > 0) {
+        const firstCandidateId = result.imported_candidates[0];
+        setLogs((prev) => [
+          ...prev,
+          {
+            timestamp: new Date().toISOString(),
+            level: 'success',
+            message: `Imported ${result.success_count} Gmail resume${result.success_count === 1 ? '' : 's'} into the candidate graph.`,
+          },
+        ]);
+        if (firstCandidateId) {
+          const firstAttachment = attachments[0];
+          setNewCandidate({
+            id: firstCandidateId,
+            name: firstAttachment.filename.replace(/\.pdf$/i, ''),
+            email: 'Imported from Gmail',
+            phone: '',
+            location: '',
+            currentRole: 'Imported candidate',
+            currentCompany: '',
+            matchScore: 0,
+            skills: [],
+            summary: 'Resume imported from Gmail through the existing ingest pipeline.',
+            experience: [],
+            education: [],
+            relationshipCount: 0,
+          });
+        }
+      }
+
+      if (result.errors.length > 0) {
+        setGmailError(result.errors.join(' '));
+      }
+
+      // Mark imported attachments
+      setGmailEmails((prev) =>
+        prev.map((email) => ({
+          ...email,
+          attachments: email.attachments.map((attachment) => {
+            const wasImported = result.imported_candidates.length > 0;
+            return wasImported ? { ...attachment, already_imported: true } : attachment;
+          }),
+        })),
+      );
+      setSelectedAttachments({});
+    } catch (err: unknown) {
+      setGmailError(err instanceof Error ? err.message : 'Failed to import Gmail attachments.');
+    } finally {
+      setGmailImporting(false);
+    }
+  };
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -283,6 +457,111 @@ export const Upload: React.FC = () => {
           </div>
         </section>
       )}
+
+      <section className="glass-panel rounded-2xl p-6 space-y-4 border border-dark-border/80">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Mail size={18} className="text-brand-400" />
+            <div>
+              <h2 className="text-base font-bold text-white">Import resumes from Gmail</h2>
+              <p className="text-xs text-slate-400">
+                Search resume-related mail, review PDF attachments, then import selected files through the existing parser.
+              </p>
+            </div>
+          </div>
+          {gmailConnected ? (
+            <span className="text-[11px] font-semibold text-emerald-400">Gmail connected (read-only)</span>
+          ) : (
+            <button
+              onClick={connectGmail}
+              className="bg-brand-600 hover:bg-brand-700 text-white font-semibold text-xs py-2 px-4 rounded-xl text-center"
+            >
+              Connect Gmail
+            </button>
+          )}
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="search"
+            value={gmailQuery}
+            onChange={(e) => setGmailQuery(e.target.value)}
+            placeholder='Search Gmail, e.g. filename:pdf subject:resume'
+            className="flex-1 bg-slate-900 border border-dark-border rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-slate-500"
+            disabled={!gmailConnected || gmailSearching}
+          />
+          <button
+            type="button"
+            onClick={searchGmail}
+            disabled={!gmailConnected || gmailSearching}
+            className="bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white font-semibold text-xs py-2.5 px-4 rounded-xl border border-dark-border"
+          >
+            {gmailSearching ? 'Searching...' : 'Search resume emails'}
+          </button>
+        </div>
+
+        {gmailError && (
+          <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-start gap-2">
+            <AlertCircle size={16} className="shrink-0 mt-0.5" />
+            <span>{gmailError}</span>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {gmailEmails.map((email) => (
+            <div key={email.id} className="rounded-xl border border-dark-border bg-slate-950/40 p-4 space-y-3">
+              <div>
+                <h3 className="text-sm font-bold text-white">{email.subject || '(no subject)'}</h3>
+                <p className="text-xs text-slate-400">{email.sender}</p>
+                <p className="text-[11px] text-slate-500">{email.date}</p>
+              </div>
+              {email.attachments.length === 0 ? (
+                <p className="text-xs text-slate-500">No attachments on this message.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {email.attachments.map((attachment) => {
+                    const disabled = attachment.already_imported
+                      || attachment.classification !== 'RESUME';
+                    const key = attachmentKey(attachment.message_id, attachment.attachment_id);
+                    return (
+                      <li key={key} className="flex items-start gap-2 text-xs text-slate-300">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={Boolean(selectedAttachments[key])}
+                          disabled={disabled || gmailImporting}
+                          onChange={() => toggleAttachment(attachment.message_id, attachment.attachment_id, disabled)}
+                        />
+                        <div>
+                          <span className="font-semibold text-white">{attachment.filename}</span>
+                          <span className="text-slate-500"> · {attachment.mime_type || 'unknown type'}</span>
+                          {attachment.already_imported && (
+                            <span className="block text-amber-400">Already imported</span>
+                          )}
+                          {attachment.classification !== 'RESUME' && (
+                            <span className="block text-rose-400">Only attachments classified as resumes can be imported</span>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {gmailEmails.length > 0 && (
+          <button
+            type="button"
+            onClick={importSelectedGmailResumes}
+            disabled={gmailImporting}
+            className="w-full sm:w-auto bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white font-semibold text-xs py-2.5 px-4 rounded-xl"
+          >
+            {gmailImporting ? 'Importing...' : 'Import selected PDFs'}
+          </button>
+        )}
+      </section>
 
     </div>
   );

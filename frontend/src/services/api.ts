@@ -8,6 +8,16 @@ import type {
   CreateJobInput,
   SearchApiResponse,
   CandidateDetailApiResponse,
+  CandidateSummaryResponse,
+  GmailAttachment,
+  GmailImportHistoryItem,
+  GmailImportResponse,
+  JobApplication,
+  JobApplicationStatus,
+  JobMatchCandidate,
+  CandidateOption,
+  DashboardStats,
+  CandidateComparisonResult,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -21,38 +31,39 @@ export const api = axios.create({
 });
 
 const mapDetailToCandidate = (detail: CandidateDetailApiResponse, matchScore = 0): Candidate => {
-  const latestExperience = detail.experiences[0];
+  const experiences = detail.experiences || [];
+  const education = detail.education || [];
+  const skills = detail.skills || [];
+  const technologies = detail.technologies || [];
+  const projects = detail.projects || [];
+  const latestExperience = experiences[0];
   return {
     id: detail.id,
     name: detail.full_name,
-    email: detail.email || '',
-    phone: detail.phone || '',
+    email: detail.email || 'Not available',
+    phone: detail.phone || 'Not available',
     location: detail.location || 'Not specified',
     currentRole: latestExperience?.role || 'Not specified',
     currentCompany: latestExperience?.company || 'Not specified',
     matchScore,
     experienceYears: detail.experience_years,
-    skills: detail.skills,
-    technologies: detail.technologies,
-    projects: detail.projects,
+    skills,
+    technologies,
+    projects,
     summary: detail.summary || 'No summary available.',
-    experience: detail.experiences.map((exp) => ({
+    experience: experiences.map((exp) => ({
       role: exp.role || 'Role not specified',
       company: exp.company,
       duration: `${exp.start_date || 'Unknown'} - ${exp.end_date || 'Present'}`,
       description: exp.description || '',
     })),
-    education: detail.education.map((edu) => ({
+    education: education.map((edu) => ({
       degree: edu.degree || 'Degree not specified',
       school: edu.institution || 'Institution not specified',
       year: '',
     })),
     relationshipCount:
-      detail.skills.length +
-      detail.technologies.length +
-      detail.projects.length +
-      detail.education.length +
-      detail.experiences.length,
+      skills.length + technologies.length + projects.length + education.length + experiences.length,
   };
 };
 
@@ -74,6 +85,9 @@ const mapSearchResultToCandidate = (
   matchedSkills: result.matched_skills,
   matchedTechnologies: result.matched_technologies,
   matchedProjects: result.matched_projects,
+  matchedRoles: result.matched_roles,
+  matchBreakdown: result.match_breakdown,
+  matchExplanation: result.explanation,
   summary: result.summary || 'No summary available.',
   experience: [],
   education: [],
@@ -230,103 +244,6 @@ const mockCandidates: Candidate[] = [
     relationshipCount: 10
   }
 ];
-
-// Generate visual graph data for a candidate
-const generateMockGraph = (candId: string): CandidateGraph => {
-  const cand = mockCandidates.find(c => c.id === candId) || mockCandidates[0];
-  
-  // Standard nodes: Candidate, current company, past companies, schools
-  const nodes: CandidateGraph['nodes'] = [
-    { id: cand.id, label: cand.name, type: 'candidate', val: 30 },
-  ];
-  const links: CandidateGraph['links'] = [];
-
-  // Add school nodes and links
-  cand.education.forEach((edu, index) => {
-    const schoolId = `school-${index}-${cand.id}`;
-    nodes.push({ id: schoolId, label: edu.school, type: 'institution', val: 18 });
-    links.push({ source: cand.id, target: schoolId, type: 'STUDIED_AT' });
-  });
-
-  // Add company nodes and links
-  cand.experience.forEach((exp, index) => {
-    const compId = `company-${index}-${cand.id}`;
-    nodes.push({ id: compId, label: exp.company, type: 'company', val: 22 });
-    links.push({ source: cand.id, target: compId, type: index === 0 ? 'WORKED_AT' : 'PREVIOUSLY_WORKED_AT' });
-  });
-
-  // Add top skill nodes and links
-  cand.skills.forEach((skill) => {
-    const skillId = `skill-${skill.toLowerCase().replace(/\s+/g, '-')}`;
-    // check if skill node already exists in case we combine
-    if (!nodes.some(n => n.id === skillId)) {
-      nodes.push({ id: skillId, label: skill, type: 'skill', val: 15 });
-    }
-    links.push({ source: cand.id, target: skillId, type: 'HAS_SKILL' });
-  });
-
-  // Add mock dynamic items (projects or shared nodes)
-  const projId = `project-1-${cand.id}`;
-  nodes.push({ id: projId, label: 'Enterprise Graph System', type: 'project', val: 16 });
-  links.push({ source: cand.id, target: projId, type: 'WORKED_ON' });
-  
-  // Link skills to the project too
-  if (cand.skills[0]) {
-    const skillId = `skill-${cand.skills[0].toLowerCase().replace(/\s+/g, '-')}`;
-    links.push({ source: projId, target: skillId, type: 'REQUIRES' });
-  }
-  if (cand.skills[1]) {
-    const skillId = `skill-${cand.skills[1].toLowerCase().replace(/\s+/g, '-')}`;
-    links.push({ source: projId, target: skillId, type: 'REQUIRES' });
-  }
-
-  return { nodes, links };
-};
-
-// Generate Global/Combined Graph for all candidates
-export const generateGlobalGraph = (): CandidateGraph => {
-  const nodes: CandidateGraph['nodes'] = [];
-  const links: CandidateGraph['links'] = [];
-  
-  // Shared hubs (Common skills/companies)
-  const sharedSkills = ['Python', 'Docker', 'Kubernetes', 'TypeScript', 'React', 'AWS'];
-  sharedSkills.forEach(s => {
-    nodes.push({ id: `skill-${s.toLowerCase()}`, label: s, type: 'skill', val: 24 }); // major hubs
-  });
-  
-  mockCandidates.forEach(cand => {
-    // Add candidate node
-    nodes.push({ id: cand.id, label: cand.name, type: 'candidate', val: 32 });
-    
-    // Add current company
-    const compId = `comp-${cand.currentCompany.toLowerCase().replace(/\s+/g, '-')}`;
-    if (!nodes.some(n => n.id === compId)) {
-      nodes.push({ id: compId, label: cand.currentCompany, type: 'company', val: 22 });
-    }
-    links.push({ source: cand.id, target: compId, type: 'WORKED_AT' });
-    
-    // Add skills. If skill is a shared hub, link to it. Otherwise create it.
-    cand.skills.forEach(s => {
-      const skillId = `skill-${s.toLowerCase().replace(/\s+/g, '-')}`;
-      if (!nodes.some(n => n.id === skillId)) {
-        nodes.push({ id: skillId, label: s, type: 'skill', val: 14 });
-      }
-      links.push({ source: cand.id, target: skillId, type: 'HAS_SKILL' });
-    });
-    
-    // Add university
-    const edu = cand.education[0];
-    if (edu) {
-      const schoolId = `school-${edu.school.toLowerCase().replace(/\s+/g, '-')}`;
-      if (!nodes.some(n => n.id === schoolId)) {
-        nodes.push({ id: schoolId, label: edu.school, type: 'institution', val: 20 });
-      }
-      links.push({ source: cand.id, target: schoolId, type: 'STUDIED_AT' });
-    }
-  });
-
-  return { nodes, links };
-};
 
 // Generate AI summary assessment reports
 const generateMockAISummary = (candId: string): AISummaryReport => {
@@ -504,62 +421,61 @@ export const resumeService = {
     };
   },
 
-  searchCandidates: async (query: string): Promise<Candidate[]> => {
+  searchCandidates: async (query: string, signal?: AbortSignal): Promise<Candidate[]> => {
     try {
-      if (USE_REAL_API) {
-        const response = await api.post<SearchApiResponse>('/search', null, {
-          params: { query },
-        });
-        return response.data.results.map(mapSearchResultToCandidate);
-      }
+      const response = await api.post<SearchApiResponse>('/search', null, {
+        params: { query },
+        signal,
+      });
+      return response.data.results.map(mapSearchResultToCandidate);
     } catch (err) {
-      console.warn('Real backend error, falling back to mock search...', err);
+      if (!signal?.aborted) console.error('Real backend search failed', err);
+      throw err;
     }
-
-    await sleep(600); // simulated network delay
-    if (!query.trim()) return mockCandidates;
-
-    const lowerQuery = query.toLowerCase();
-    return mockCandidates.filter((c) => 
-      c.name.toLowerCase().includes(lowerQuery) ||
-      c.currentRole.toLowerCase().includes(lowerQuery) ||
-      c.currentCompany.toLowerCase().includes(lowerQuery) ||
-      c.skills.some(s => s.toLowerCase().includes(lowerQuery)) ||
-      c.location.toLowerCase().includes(lowerQuery)
-    );
   },
 
   getCandidateById: async (id: string): Promise<Candidate> => {
     try {
-      if (USE_REAL_API) {
-        const response = await api.get<CandidateDetailApiResponse>(`/candidates/${id}/detail`);
-        return mapDetailToCandidate(response.data);
-      }
+      const response = await api.get<CandidateDetailApiResponse>(`/candidates/${id}/detail`);
+      return mapDetailToCandidate(response.data);
     } catch (err) {
-      console.warn(`Real backend error fetching candidate ${id}, falling back...`, err);
+      console.error(`Failed to fetch candidate profile ${id}`, err);
+      throw err;
     }
-
-    await sleep(500);
-    const cand = mockCandidates.find(c => c.id === id);
-    if (!cand) throw new Error(`Candidate with id ${id} not found.`);
-    return cand;
   },
 
-  getCandidateGraph: async (id: string): Promise<CandidateGraph> => {
-    try {
-      if (import.meta.env.VITE_USE_REAL_API === 'true') {
-        const response = await api.get<CandidateGraph>(`/api/graph/${id}`);
-        return response.data;
-      }
-    } catch (err) {
-      console.warn(`Real backend error fetching graph ${id}, falling back...`, err);
-    }
-
-    await sleep(700);
+  getCandidateGraph: async (
+    id: string,
+    skip = 0,
+    limit = 100,
+  ): Promise<CandidateGraph> => {
     if (id === 'global' || !id) {
-      return generateGlobalGraph();
+      const response = await api.get<CandidateGraph>('/candidates/graph', {
+        params: { skip, limit },
+      });
+      return response.data;
     }
-    return generateMockGraph(id);
+    try {
+      const response = await api.get<CandidateGraph>(`/candidates/${id}/graph`);
+      return response.data;
+    } catch (err) {
+      console.error(`Failed to fetch graph for candidate ${id}`, err);
+      throw err;
+    }
+  },
+
+  getDashboardStats: async (): Promise<DashboardStats> => {
+    const response = await api.get<DashboardStats>('/dashboard/stats');
+    return response.data;
+  },
+
+  deleteCandidate: async (id: string): Promise<void> => {
+    await api.delete(`/candidates/${encodeURIComponent(id)}`);
+  },
+
+  getCandidateSummary: async (id: string): Promise<CandidateSummaryResponse> => {
+    const response = await api.post<CandidateSummaryResponse>(`/resumes/${id}/summary`);
+    return response.data;
   },
 
   getAISummary: async (id: string): Promise<AISummaryReport> => {
@@ -574,232 +490,483 @@ export const resumeService = {
 
     await sleep(600);
     return generateMockAISummary(id);
+  },
+
+  compareCandidates: async (candidateIds: string[]): Promise<CandidateComparisonResult> => {
+    try {
+      const response = await api.post('/candidates/compare', { candidate_ids: candidateIds });
+      return response.data;
+    } catch (err) {
+      console.error('Real backend error comparing candidates', err);
+      throw err;
+    }
   }
 };
-
-// ==========================================
-// MOCK JOBS DATABASE
-// ==========================================
-
-const mockJobs: Job[] = [
-  {
-    id: 'job-1',
-    title: 'Senior ML Engineer - LLM Fine-tuning',
-    description: 'Join our AI team to lead the development of production-grade Language Models. Work with state-of-the-art transformer architectures and RAG frameworks to build next-generation AI solutions.',
-    requiredSkills: ['PyTorch', 'Python', 'LLMs', 'RAG', 'Distributed Systems'],
-    experience: 5,
-    location: 'San Francisco, CA',
-    employmentType: 'Full-time',
-    salary: { min: 180000, max: 240000, currency: 'USD' },
-    status: 'Active',
-    createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-    postedBy: 'tech-recruiter@graphcv.io'
-  },
-  {
-    id: 'job-2',
-    title: 'DevOps & Infrastructure Architect',
-    description: 'Build and scale cloud infrastructure on AWS and Kubernetes. Lead infrastructure-as-code initiatives and optimize multi-region deployments. Work on CI/CD automation and monitoring solutions.',
-    requiredSkills: ['Kubernetes', 'Terraform', 'AWS', 'Docker', 'Go', 'CI/CD'],
-    experience: 6,
-    location: 'Seattle, WA',
-    employmentType: 'Full-time',
-    salary: { min: 170000, max: 230000, currency: 'USD' },
-    status: 'Active',
-    createdAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    postedBy: 'tech-recruiter@graphcv.io'
-  },
-  {
-    id: 'job-3',
-    title: 'Frontend UI/UX Engineer',
-    description: 'Design and build beautiful, accessible user interfaces for our flagship product. Work with React, TypeScript, and Tailwind CSS. Collaborate with designers to implement pixel-perfect interfaces.',
-    requiredSkills: ['React', 'TypeScript', 'Tailwind CSS', 'Next.js', 'JavaScript'],
-    experience: 3,
-    location: 'New York, NY (Remote)',
-    employmentType: 'Full-time',
-    salary: { min: 140000, max: 190000, currency: 'USD' },
-    status: 'Active',
-    createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    postedBy: 'tech-recruiter@graphcv.io'
-  },
-  {
-    id: 'job-4',
-    title: 'Backend Engineer - Fintech',
-    description: 'Build highly scalable backend services for payment processing and ledger management. Work with Go, PostgreSQL, and Kafka. Expertise in transaction integrity and distributed systems required.',
-    requiredSkills: ['Go', 'PostgreSQL', 'Kafka', 'Redis', 'gRPC'],
-    experience: 4,
-    location: 'Austin, TX',
-    employmentType: 'Full-time',
-    salary: { min: 160000, max: 220000, currency: 'USD' },
-    status: 'Active',
-    createdAt: new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
-    postedBy: 'tech-recruiter@graphcv.io'
-  },
-  {
-    id: 'job-5',
-    title: 'Data Scientist - Analytics',
-    description: 'Develop data pipelines and machine learning models to unlock insights from large datasets. Work with Python, SQL, and cloud data warehouses. Help drive product decisions with data-driven recommendations.',
-    requiredSkills: ['Python', 'SQL', 'Machine Learning', 'Data Analysis', 'Apache Spark'],
-    experience: 3,
-    location: 'Boston, MA (Remote)',
-    employmentType: 'Full-time',
-    salary: { min: 130000, max: 180000, currency: 'USD' },
-    status: 'Closed',
-    createdAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-    postedBy: 'tech-recruiter@graphcv.io'
-  },
-  {
-    id: 'job-6',
-    title: 'Full Stack Engineer',
-    description: 'Build full-stack features from database to user interface. Work across our tech stack: React, Node.js, TypeScript, and PostgreSQL. Contribute to architectural decisions and code quality.',
-    requiredSkills: ['React', 'Node.js', 'TypeScript', 'PostgreSQL', 'Docker'],
-    experience: 2,
-    location: 'Denver, CO (Remote)',
-    employmentType: 'Full-time',
-    salary: { min: 120000, max: 170000, currency: 'USD' },
-    status: 'Active',
-    createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    postedBy: 'tech-recruiter@graphcv.io'
-  }
-];
 
 // ==========================================
 // JOB SERVICE
 // ==========================================
 
+interface JobApiRecord {
+  id: string;
+  title: string;
+  description: string;
+  required_skills: string[];
+  experience: number;
+  location: string;
+  employment_type: Job['employmentType'];
+  salary?: string | null;
+  status: Job['status'];
+  created_by?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+const salaryFromApi = (salary?: string | null): Job['salary'] => {
+  if (!salary) return undefined;
+  const amounts = [...salary.matchAll(/\d[\d,]*/g)]
+    .map(([value]) => Number(value.replaceAll(',', '')))
+    .filter(Number.isFinite);
+  const currency = salary.match(/\b[A-Z]{3}\b/)?.[0] || salary;
+  return {
+    currency,
+    min: amounts[0],
+    max: amounts[1],
+  };
+};
+
+const salaryToApi = (salary: CreateJobInput['salary']): string | null => {
+  if (!salary) return null;
+  if (salary.min !== undefined && salary.max !== undefined) {
+    return `${salary.currency} ${salary.min} - ${salary.max}`;
+  }
+  if (salary.min !== undefined) return `${salary.currency} ${salary.min}+`;
+  if (salary.max !== undefined) return `Up to ${salary.currency} ${salary.max}`;
+  return null;
+};
+
+const mapJobFromApi = (job: JobApiRecord): Job => ({
+  id: job.id,
+  title: job.title,
+  description: job.description,
+  requiredSkills: job.required_skills || [],
+  experience: job.experience,
+  location: job.location,
+  employmentType: job.employment_type,
+  salary: salaryFromApi(job.salary),
+  status: job.status,
+  createdAt: job.created_at || new Date().toISOString(),
+  updatedAt: job.updated_at || new Date().toISOString(),
+  postedBy: job.created_by || undefined,
+});
+
+const mapJobToApi = (job: Partial<CreateJobInput>) => ({
+  ...(job.title !== undefined && { title: job.title }),
+  ...(job.description !== undefined && { description: job.description }),
+  ...(job.requiredSkills !== undefined && { required_skills: job.requiredSkills }),
+  ...(job.experience !== undefined && { experience: job.experience }),
+  ...(job.location !== undefined && { location: job.location }),
+  ...(job.employmentType !== undefined && { employment_type: job.employmentType }),
+  ...(job.salary !== undefined && { salary: salaryToApi(job.salary) }),
+  ...(job.status !== undefined && { status: job.status }),
+});
+
 export const jobService = {
   getAllJobs: async (): Promise<Job[]> => {
-    try {
-      if (import.meta.env.VITE_USE_REAL_API === 'true') {
-        const response = await api.get<Job[]>('/api/jobs');
-        return response.data;
-      }
-    } catch (err) {
-      console.warn('Real backend error, falling back to mock jobs...', err);
-    }
-
-    await sleep(400);
-    return mockJobs;
+    const response = await api.get<{ items: JobApiRecord[] }>('/jobs', {
+      params: { limit: 100 },
+    });
+    return response.data.items.map(mapJobFromApi);
   },
 
   searchJobs: async (query: string): Promise<Job[]> => {
-    try {
-      if (import.meta.env.VITE_USE_REAL_API === 'true') {
-        const response = await api.get<Job[]>(`/api/jobs/search?q=${encodeURIComponent(query)}`);
-        return response.data;
-      }
-    } catch (err) {
-      console.warn('Real backend error, falling back to mock job search...', err);
-    }
-
-    await sleep(500);
-    if (!query.trim()) return mockJobs;
-
-    const lowerQuery = query.toLowerCase();
-    return mockJobs.filter((job) =>
-      job.title.toLowerCase().includes(lowerQuery) ||
-      job.description.toLowerCase().includes(lowerQuery) ||
-      job.requiredSkills.some(s => s.toLowerCase().includes(lowerQuery)) ||
-      job.location.toLowerCase().includes(lowerQuery)
-    );
+    const response = await api.get<{ items: JobApiRecord[] }>('/jobs/search', {
+      params: { q: query, limit: 100 },
+    });
+    return response.data.items.map(mapJobFromApi);
   },
 
   getJobsByStatus: async (status: 'Active' | 'Closed'): Promise<Job[]> => {
-    try {
-      if (import.meta.env.VITE_USE_REAL_API === 'true') {
-        const response = await api.get<Job[]>(`/api/jobs?status=${status}`);
-        return response.data;
-      }
-    } catch (err) {
-      console.warn('Real backend error, falling back to mock job status filter...', err);
-    }
-
-    await sleep(300);
-    return mockJobs.filter(job => job.status === status);
+    const response = await api.get<{ items: JobApiRecord[] }>('/jobs', {
+      params: { status, limit: 100 },
+    });
+    return response.data.items.map(mapJobFromApi);
   },
 
   getJobById: async (id: string): Promise<Job> => {
-    try {
-      if (import.meta.env.VITE_USE_REAL_API === 'true') {
-        const response = await api.get<Job>(`/api/jobs/${id}`);
-        return response.data;
-      }
-    } catch (err) {
-      console.warn(`Real backend error fetching job ${id}, falling back...`, err);
-    }
-
-    await sleep(300);
-    const job = mockJobs.find(j => j.id === id);
-    if (!job) throw new Error(`Job with id ${id} not found.`);
-    return job;
+    const response = await api.get<JobApiRecord>(`/jobs/${id}`);
+    return mapJobFromApi(response.data);
   },
 
   createJob: async (input: CreateJobInput): Promise<Job> => {
-    try {
-      if (import.meta.env.VITE_USE_REAL_API === 'true') {
-        const response = await api.post<Job>('/api/jobs', input);
-        return response.data;
-      }
-    } catch (err) {
-      console.warn('Real backend error, falling back to mock job creation...', err);
-    }
-
-    await sleep(600);
-    const newJob: Job = {
-      id: `job-${Date.now()}`,
-      ...input,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      postedBy: 'tech-recruiter@graphcv.io'
-    };
-
-    // Add to mock database
-    mockJobs.unshift(newJob);
-    return newJob;
+    const response = await api.post<JobApiRecord>('/jobs', mapJobToApi(input));
+    return mapJobFromApi(response.data);
   },
 
   updateJob: async (id: string, input: Partial<CreateJobInput>): Promise<Job> => {
-    try {
-      if (import.meta.env.VITE_USE_REAL_API === 'true') {
-        const response = await api.patch<Job>(`/api/jobs/${id}`, input);
-        return response.data;
-      }
-    } catch (err) {
-      console.warn(`Real backend error updating job ${id}, falling back...`, err);
-    }
-
-    await sleep(500);
-    const jobIndex = mockJobs.findIndex(j => j.id === id);
-    if (jobIndex === -1) throw new Error(`Job with id ${id} not found.`);
-
-    const updatedJob: Job = {
-      ...mockJobs[jobIndex],
-      ...input,
-      updatedAt: new Date().toISOString()
-    };
-
-    mockJobs[jobIndex] = updatedJob;
-    return updatedJob;
+    const response = await api.put<JobApiRecord>(`/jobs/${id}`, mapJobToApi(input));
+    return mapJobFromApi(response.data);
   },
 
   deleteJob: async (id: string): Promise<void> => {
-    try {
-      if (import.meta.env.VITE_USE_REAL_API === 'true') {
-        await api.delete(`/api/jobs/${id}`);
+    await api.delete(`/jobs/${id}`);
+  },
+
+  matchCandidates: async (jobId: string): Promise<JobMatchCandidate[]> => {
+    const response = await api.post<{
+      matched_candidates: JobMatchCandidate[];
+    }>(`/jobs/${jobId}/match`);
+    return response.data.matched_candidates;
+  },
+
+  getApplicants: async (jobId: string): Promise<JobApplication[]> => {
+    const response = await api.get<JobApplication[]>(`/jobs/${jobId}/applicants`);
+    return response.data;
+  },
+
+  addApplicant: async (
+    jobId: string,
+    candidateId: string,
+  ): Promise<JobApplication> => {
+    const response = await api.post<JobApplication>(
+      `/jobs/${jobId}/applicants`,
+      { candidate_id: candidateId },
+    );
+    return response.data;
+  },
+
+  updateApplicantStatus: async (
+    jobId: string,
+    candidateId: string,
+    status: JobApplicationStatus,
+  ): Promise<JobApplication> => {
+    const response = await api.patch<JobApplication>(
+      `/jobs/${jobId}/applicants/${candidateId}`,
+      { status },
+    );
+    return response.data;
+  },
+
+  getCandidates: async (): Promise<CandidateOption[]> => {
+    const response = await api.get<{
+      items: CandidateOption[];
+    }>('/candidates', { params: { limit: 100 } });
+    return response.data.items;
+  }
+};
+
+const gmailApiError = (err: unknown, fallback: string): string => {
+  if (axios.isAxiosError(err)) {
+    const data = err.response?.data as { detail?: string; errors?: { service?: string } } | undefined;
+    if (typeof data?.detail === 'string' && data.detail.trim()) {
+      return data.detail;
+    }
+    if (err.response?.status === 401) {
+      return 'Gmail is not connected. Connect Gmail with read-only access first.';
+    }
+    return err.message || fallback;
+  }
+  return fallback;
+};
+
+export const gmailService = {
+  getAuthUrl: async (): Promise<{ auth_url: string; state: string }> => {
+    const response = await api.get('/gmail/auth-url');
+    return response.data;
+  },
+
+  connect: async (): Promise<string> => {
+    const authResponse = await api.get<{ auth_url: string; state: string }>('/gmail/auth-url');
+    const { auth_url: authUrl, state } = authResponse.data;
+    const redirectUri = new URL(authUrl).searchParams.get('redirect_uri');
+    if (!redirectUri) {
+      throw new Error('Gmail authorization URL is missing its callback URI.');
+    }
+    const callbackOrigin = new URL(redirectUri).origin;
+
+    return new Promise((resolve, reject) => {
+      let popup: Window | null = null;
+      let settled = false;
+      let callbackReceived = false;
+      let closeGraceTimer: ReturnType<typeof setTimeout> | undefined;
+
+      const cleanup = () => {
+        window.removeEventListener('message', handleMessage);
+        clearInterval(closeCheck);
+        if (closeGraceTimer) clearTimeout(closeGraceTimer);
+        clearTimeout(flowTimeout);
+      };
+
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve(state);
+      };
+
+      const handleMessage = (event: MessageEvent<unknown>) => {
+        if (event.origin !== callbackOrigin || event.source !== popup) return;
+        if (!event.data || typeof event.data !== 'object') return;
+
+        const message = event.data as {
+          type?: unknown;
+          success?: unknown;
+          state?: unknown;
+          error?: unknown;
+        };
+        if (message.type !== 'gmail_oauth_callback') return;
+        if (message.state !== state) {
+          finish(new Error('OAuth state validation failed. Please try again.'));
+          return;
+        }
+        callbackReceived = true;
+        if (closeCheck) clearInterval(closeCheck);
+        if (closeGraceTimer) clearTimeout(closeGraceTimer);
+        if (message.success === true) {
+          void api.get<{ configured: boolean; connected: boolean }>('/gmail/status', {
+            params: { state },
+          }).then(({ data: status }) => {
+            if (!status.connected) {
+              finish(new Error('Gmail credentials were not stored. Please try again.'));
+              return;
+            }
+            finish();
+          }).catch(() => {
+            finish(new Error('Unable to verify the Gmail connection. Please try again.'));
+          });
+        } else if (message.success === false) {
+          finish(new Error(
+            typeof message.error === 'string'
+              ? message.error
+              : 'Failed to connect to Gmail.',
+          ));
+        }
+      };
+
+      window.addEventListener('message', handleMessage);
+      const closeCheck = setInterval(() => {
+        if (popup?.closed && !callbackReceived && !closeGraceTimer) {
+          closeGraceTimer = setTimeout(() => {
+            finish(new Error('OAuth popup was closed before authentication completed.'));
+          }, 2000);
+        }
+      }, 250);
+      const flowTimeout = setTimeout(() => {
+        finish(new Error('OAuth flow timed out. Please try again.'));
+      }, 120000);
+      try {
+        popup = window.open(authUrl, 'gmail-oauth', 'width=500,height=600');
+      } catch {
+        finish(new Error('Unable to open the Gmail authorization popup.'));
         return;
       }
-    } catch (err) {
-      console.warn(`Real backend error deleting job ${id}, falling back...`, err);
-    }
 
-    await sleep(400);
-    const jobIndex = mockJobs.findIndex(j => j.id === id);
-    if (jobIndex === -1) throw new Error(`Job with id ${id} not found.`);
-    mockJobs.splice(jobIndex, 1);
-  }
+      if (!popup) {
+        finish(new Error('Popup was blocked. Please allow popups for this site and try again.'));
+      }
+    });
+  },
+
+  getStatus: async (state?: string): Promise<{ configured: boolean; connected: boolean; email?: string | null }> => {
+    const response = await api.get('/gmail/status', {
+      params: state ? { state } : undefined,
+    });
+    return response.data;
+  },
+
+  disconnect: async (state: string): Promise<{ message: string }> => {
+    try {
+      const response = await api.post('/gmail/disconnect', null, {
+        params: { state },
+      });
+      return response.data;
+    } catch (err) {
+      throw new Error(
+        gmailApiError(err, 'Failed to disconnect Gmail account.'),
+        { cause: err },
+      );
+    }
+  },
+
+  switchAccount: async (oldState: string): Promise<string> => {
+    try {
+      const authResponse = await api.get<{ auth_url: string; state: string }>('/gmail/switch-account', {
+        params: { state: oldState },
+      });
+      const { auth_url: authUrl, state: newState } = authResponse.data;
+      const redirectUri = new URL(authUrl).searchParams.get('redirect_uri');
+      if (!redirectUri) {
+        throw new Error('Gmail authorization URL is missing its callback URI.');
+      }
+      const callbackOrigin = new URL(redirectUri).origin;
+
+      return new Promise((resolve, reject) => {
+        let popup: Window | null = null;
+        let settled = false;
+        let callbackReceived = false;
+        let closeGraceTimer: ReturnType<typeof setTimeout> | undefined;
+
+        const cleanup = () => {
+          window.removeEventListener('message', handleMessage);
+          clearInterval(closeCheck);
+          if (closeGraceTimer) clearTimeout(closeGraceTimer);
+          clearTimeout(flowTimeout);
+        };
+
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (error) reject(error);
+          else resolve(newState);
+        };
+
+        const handleMessage = (event: MessageEvent<unknown>) => {
+          if (event.origin !== callbackOrigin || event.source !== popup) return;
+          if (!event.data || typeof event.data !== 'object') return;
+
+          const message = event.data as {
+            type?: unknown;
+            success?: unknown;
+            state?: unknown;
+            error?: unknown;
+          };
+          if (message.type !== 'gmail_oauth_callback') return;
+          if (message.state !== newState) {
+            finish(new Error('OAuth state validation failed. Please try again.'));
+            return;
+          }
+          callbackReceived = true;
+          if (closeCheck) clearInterval(closeCheck);
+          if (closeGraceTimer) clearTimeout(closeGraceTimer);
+          if (message.success === true) {
+            // On successful switch, disconnect the old account
+            void api.post('/gmail/disconnect', null, {
+              params: { state: oldState },
+            }).catch((err) => {
+              console.warn('Failed to disconnect old Gmail account:', err);
+            });
+
+            void api.get<{ configured: boolean; connected: boolean; email?: string | null }>('/gmail/status', {
+              params: { state: newState },
+            }).then(({ data: status }) => {
+              if (!status.connected) {
+                finish(new Error('Gmail credentials were not stored. Please try again.'));
+                return;
+              }
+              finish();
+            }).catch(() => {
+              finish(new Error('Unable to verify the Gmail connection. Please try again.'));
+            });
+          } else if (message.success === false) {
+            finish(new Error(
+              typeof message.error === 'string'
+                ? message.error
+                : 'Failed to connect to Gmail.',
+            ));
+          }
+        };
+
+        window.addEventListener('message', handleMessage);
+        const closeCheck = setInterval(() => {
+          if (popup?.closed && !callbackReceived && !closeGraceTimer) {
+            closeGraceTimer = setTimeout(() => {
+              finish(new Error('OAuth popup was closed before authentication completed.'));
+            }, 2000);
+          }
+        }, 250);
+        const flowTimeout = setTimeout(() => {
+          finish(new Error('OAuth flow timed out. Please try again.'));
+        }, 120000);
+        try {
+          popup = window.open(authUrl, 'gmail-oauth', 'width=500,height=600');
+        } catch {
+          finish(new Error('Unable to open the Gmail authorization popup.'));
+          return;
+        }
+
+        if (!popup) {
+          finish(new Error('Popup was blocked. Please allow popups for this site and try again.'));
+        }
+      });
+    } catch (err) {
+      throw new Error(
+        gmailApiError(err, 'Failed to switch Gmail account.'),
+        { cause: err },
+      );
+    }
+  },
+
+  searchResumeEmails: async (
+    state: string,
+    query?: string,
+    maxResults?: number,
+  ): Promise<GmailAttachment[]> => {
+    try {
+      const response = await api.post('/gmail/search', {
+        query: query || 'resume OR cv OR "job application"',
+        max_results: maxResults || 50,
+      }, {
+        params: { state },
+      });
+      return response.data;
+    } catch (err) {
+      throw new Error(
+        gmailApiError(err, 'Failed to search Gmail resume emails.'),
+        { cause: err },
+      );
+    }
+  },
+
+  importAttachments: async (
+    state: string,
+    attachments: GmailAttachment[],
+  ): Promise<GmailImportResponse> => {
+    try {
+      const response = await api.post('/gmail/import', { attachments }, {
+        params: { state },
+      });
+      return response.data;
+    } catch (err) {
+      throw new Error(
+        gmailApiError(err, 'Failed to import Gmail resume attachments.'),
+        { cause: err },
+      );
+    }
+  },
+
+  getImportHistory: async (limit = 100): Promise<GmailImportHistoryItem[]> => {
+    try {
+      const response = await api.get('/gmail/import-history', {
+        params: { limit },
+      });
+      return response.data;
+    } catch (err) {
+      throw new Error(
+        gmailApiError(err, 'Failed to load Gmail import history.'),
+        { cause: err },
+      );
+    }
+  },
+
+  retryFailedImport: async (
+    state: string,
+    messageId: string,
+    attachmentId: string,
+  ): Promise<GmailImportResponse> => {
+    try {
+      const response = await api.post(
+        '/gmail/import/retry',
+        { message_id: messageId, attachment_id: attachmentId },
+        { params: { state } },
+      );
+      return response.data;
+    } catch (err) {
+      throw new Error(
+        gmailApiError(err, 'Failed to retry Gmail attachment import.'),
+        { cause: err },
+      );
+    }
+  },
 };

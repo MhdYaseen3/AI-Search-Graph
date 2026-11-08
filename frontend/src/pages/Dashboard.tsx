@@ -6,32 +6,32 @@ import {
   Search, 
   UploadCloud, 
   ChevronRight, 
-  TrendingUp, 
   Zap, 
   Award,
   BookOpen
 } from 'lucide-react';
 import { resumeService } from '../services/api';
-import type { Candidate } from '../types';
+import type { DashboardStats } from '../types';
 
 export const Dashboard: React.FC = () => {
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchStats = async () => {
+    const fetchDashboard = async () => {
+      setLoading(true);
       try {
-        const data = await resumeService.searchCandidates('');
-        setCandidates(data);
+        setDashboardStats(await resumeService.getDashboardStats());
       } catch (err) {
         console.error('Failed to load dashboard statistics', err);
+        setDashboardStats(null);
       } finally {
         setLoading(false);
       }
     };
-    fetchStats();
+    void fetchDashboard();
   }, []);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -44,24 +44,8 @@ export const Dashboard: React.FC = () => {
   };
 
   // Compute stats
-  const totalResumes = candidates.length;
-  const averageMatchScore = totalResumes > 0 
-    ? Math.round(candidates.reduce((sum, c) => sum + c.matchScore, 0) / totalResumes) 
-    : 0;
-  const totalRelationships = candidates.reduce((sum, c) => sum + c.relationshipCount, 0);
-
-  // Hardcode some top aggregated skills for visualization
-  const skillsCountMap: Record<string, number> = {};
-  candidates.forEach(c => {
-    c.skills.forEach(s => {
-      skillsCountMap[s] = (skillsCountMap[s] || 0) + 1;
-    });
-  });
-  
-  const skillChartData = Object.entries(skillsCountMap)
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 5);
+  const skillChartData = dashboardStats?.top_skills ?? [];
+  const recentCandidates = dashboardStats?.recent_candidates ?? [];
 
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
@@ -107,7 +91,9 @@ export const Dashboard: React.FC = () => {
         <div className="glass-panel rounded-2xl p-6 flex items-center justify-between">
           <div className="space-y-1">
             <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Resumes</span>
-            <h3 className="text-3xl font-extrabold text-white">{loading ? '...' : totalResumes}</h3>
+            <h3 className="text-3xl font-extrabold text-white">
+              {loading ? '...' : dashboardStats?.total_resumes ?? '—'}
+            </h3>
             <span className="text-[10px] text-slate-400 block">Parsed successfully</span>
           </div>
           <div className="w-12 h-12 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-400">
@@ -118,8 +104,10 @@ export const Dashboard: React.FC = () => {
         <div className="glass-panel rounded-2xl p-6 flex items-center justify-between">
           <div className="space-y-1">
             <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Graph Relationships</span>
-            <h3 className="text-3xl font-extrabold text-white">{loading ? '...' : totalRelationships}</h3>
-            <span className="text-[10px] text-slate-400 block">Nodes & Edge links</span>
+            <h3 className="text-3xl font-extrabold text-white">
+              {loading ? '...' : dashboardStats?.graph_relationships ?? '—'}
+            </h3>
+            <span className="text-[10px] text-slate-400 block">Persisted Neo4j relationships</span>
           </div>
           <div className="w-12 h-12 rounded-xl bg-brand-500/10 flex items-center justify-center text-brand-500">
             <GitFork size={22} />
@@ -129,10 +117,14 @@ export const Dashboard: React.FC = () => {
         <div className="glass-panel rounded-2xl p-6 flex items-center justify-between">
           <div className="space-y-1">
             <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Avg. Match Score</span>
-            <h3 className="text-3xl font-extrabold text-white">{loading ? '...' : `${averageMatchScore}%`}</h3>
-            <span className="text-[10px] text-emerald-400 flex items-center gap-1">
-              <TrendingUp size={10} /> +1.2% this week
-            </span>
+            <h3 className="text-3xl font-extrabold text-white">
+              {loading
+                ? '...'
+                : dashboardStats?.average_match_score == null
+                  ? 'N/A'
+                  : `${dashboardStats.average_match_score}%`}
+            </h3>
+            <span className="text-[10px] text-slate-400 block">Across active job matches</span>
           </div>
           <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400">
             <Award size={22} />
@@ -142,8 +134,20 @@ export const Dashboard: React.FC = () => {
         <div className="glass-panel rounded-2xl p-6 flex items-center justify-between">
           <div className="space-y-1">
             <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Processing Queue</span>
-            <h3 className="text-3xl font-extrabold text-white">Idle</h3>
-            <span className="text-[10px] text-slate-400 block">All systems active</span>
+            <h3 className="text-2xl font-extrabold text-white">
+              {loading
+                ? '...'
+                : dashboardStats?.processing_queue.idle
+                  ? 'Idle'
+                  : dashboardStats?.processing_queue.processing
+                    ? 'Processing'
+                    : 'Pending'}
+            </h3>
+            <span className="text-[10px] text-slate-400 block">
+              {loading || !dashboardStats
+                ? 'Queue status unavailable'
+                : `Pending ${dashboardStats.processing_queue.pending} · Processing ${dashboardStats.processing_queue.processing} · Completed ${dashboardStats.processing_queue.completed} · Failed ${dashboardStats.processing_queue.failed} · Duplicates ${dashboardStats.processing_queue.duplicates}`}
+            </span>
           </div>
           <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400">
             <BookOpen size={22} />
@@ -226,44 +230,29 @@ export const Dashboard: React.FC = () => {
                 <div className="h-10 rounded bg-slate-800/40 animate-pulse" />
                 <div className="h-10 rounded bg-slate-800/40 animate-pulse" />
               </div>
-            ) : candidates.length > 0 ? (
+            ) : recentCandidates.length > 0 ? (
               <table className="w-full min-w-[500px]">
                 <thead>
                   <tr className="border-b border-dark-border/60 text-[10px] text-slate-500 uppercase tracking-wider text-left">
                     <th className="pb-3">Candidate</th>
-                    <th className="pb-3">Current Role</th>
-                    <th className="pb-3 text-center">Match</th>
-                    <th className="pb-3 text-center">Rel. Nodes</th>
+                    <th className="pb-3 text-center">Graph Connections</th>
                     <th className="pb-3 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-dark-border/40 text-xs">
-                  {candidates.slice(0, 3).map((candidate) => (
+                  {recentCandidates.map((candidate) => (
                     <tr key={candidate.id} className="hover:bg-slate-800/20 transition-colors">
                       <td className="py-3.5 font-medium text-white flex items-center gap-2">
                         <div className="w-7 h-7 rounded-lg bg-brand-600/10 border border-brand-500/20 text-brand-500 font-bold flex items-center justify-center text-[10px]">
-                          {candidate.name.split(' ').map(n=>n[0]).join('')}
+                          {candidate.full_name.split(' ').map(n=>n[0]).join('')}
                         </div>
                         <div>
-                          <span className="block">{candidate.name}</span>
+                          <span className="block">{candidate.full_name}</span>
                           <span className="text-[10px] text-slate-500 font-normal">{candidate.location}</span>
                         </div>
                       </td>
-                      <td className="py-3.5 text-slate-300">
-                        <span className="block font-semibold">{candidate.currentRole}</span>
-                        <span className="text-[10px] text-slate-500">{candidate.currentCompany}</span>
-                      </td>
-                      <td className="py-3.5 text-center">
-                        <span className={`inline-block px-2 py-0.5 rounded-full font-semibold text-[10px] ${
-                          candidate.matchScore >= 90 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                          candidate.matchScore >= 80 ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' :
-                          'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                        }`}>
-                          {candidate.matchScore}%
-                        </span>
-                      </td>
                       <td className="py-3.5 text-center text-slate-400">
-                        {candidate.relationshipCount} edges
+                        {candidate.relationship_count} edges
                       </td>
                       <td className="py-3.5 text-right">
                         <Link 

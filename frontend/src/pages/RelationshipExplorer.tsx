@@ -17,12 +17,77 @@ import {
 import { resumeService } from '../services/api';
 import type { GraphNode, GraphLink } from '../types';
 
+const GRAPH_PAGE_SIZE = 25;
+
+const getGraphEndpointId = (endpoint: unknown): string => {
+  if (typeof endpoint === 'string') return endpoint;
+  if (
+    endpoint
+    && typeof endpoint === 'object'
+    && 'id' in endpoint
+    && typeof endpoint.id === 'string'
+  ) {
+    return endpoint.id;
+  }
+  return '';
+};
+
+const layoutGraphNodes = (
+  incoming: GraphNode[],
+  existing: GraphNode[],
+  centeredCandidateId: string,
+): GraphNode[] => {
+  const categoryLayout = {
+    candidate: { radius: centeredCandidateId === 'global' ? 100 : 0, start: -Math.PI / 4, end: Math.PI / 4 },
+    job: { radius: 300, start: -Math.PI / 4, end: Math.PI / 4 },
+    application: { radius: 180, start: -Math.PI / 4, end: Math.PI / 4 },
+    skill: { radius: 240, start: -Math.PI / 4, end: Math.PI / 4 },
+    company: { radius: 260, start: Math.PI / 4, end: (3 * Math.PI) / 4 },
+    institution: { radius: 260, start: (3 * Math.PI) / 4, end: (5 * Math.PI) / 4 },
+    project: { radius: 300, start: (5 * Math.PI) / 4, end: (7 * Math.PI) / 4 },
+  } as const;
+  const groupCounts = [...existing, ...incoming].reduce<Record<string, number>>((acc, node) => {
+    acc[node.type] = (acc[node.type] || 0) + 1;
+    return acc;
+  }, {});
+  const offsets = existing.reduce<Record<string, number>>((acc, node) => {
+    acc[node.type] = (acc[node.type] || 0) + 1;
+    return acc;
+  }, {});
+
+  return incoming.map((node) => {
+    const layout = categoryLayout[node.type] ?? categoryLayout.skill;
+    const index = offsets[node.type] || 0;
+    const count = Math.max(1, groupCounts[node.type] || 1);
+    const angle = layout.start + (index / count) * (layout.end - layout.start)
+      + (Math.random() - 0.5) * 0.14;
+    offsets[node.type] = index + 1;
+    const radius = layout.radius + (Math.random() * 40 - 20);
+    const centered = node.type === 'candidate' && node.id === centeredCandidateId
+      && centeredCandidateId !== 'global';
+    return {
+      ...node,
+      x: centered ? 0 : Math.cos(angle) * radius,
+      y: centered ? 0 : Math.sin(angle) * radius,
+      vx: 0,
+      vy: 0,
+      fx: null,
+      fy: null,
+    };
+  });
+};
+
 export const RelationshipExplorer: React.FC = () => {
   const [searchParams] = useSearchParams();
   const targetCandidateId = searchParams.get('id') || 'global';
 
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [graphTotal, setGraphTotal] = useState(0);
+  const [nextGraphSkip, setNextGraphSkip] = useState(0);
+  const [graphError, setGraphError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [simulationRun, setSimulationRun] = useState(0);
   
   // Toggles for Node Type Filters
   const [filters, setFilters] = useState({
@@ -31,6 +96,8 @@ export const RelationshipExplorer: React.FC = () => {
     company: true,
     institution: true,
     project: true,
+    job: true,
+    application: true,
   });
 
   // Selected Node for overlay/side panel
@@ -85,53 +152,20 @@ export const RelationshipExplorer: React.FC = () => {
   useEffect(() => {
     const loadGraph = async () => {
       setLoading(true);
+      setGraphError(null);
       try {
-        const data = await resumeService.getCandidateGraph(targetCandidateId);
-        
-        // Initialize positions with category grouping and extra spacing
-        const categoryLayout = {
-          candidate: { radius: 0, start: -Math.PI / 4, end: Math.PI / 4 },
-          skill: { radius: 240, start: -Math.PI / 4, end: Math.PI / 4 },
-          company: { radius: 260, start: Math.PI / 4, end: (3 * Math.PI) / 4 },
-          institution: { radius: 260, start: (3 * Math.PI) / 4, end: (5 * Math.PI) / 4 },
-          project: { radius: 300, start: (5 * Math.PI) / 4, end: (7 * Math.PI) / 4 },
-        } as const;
-
-        const typeCounts = data.nodes.reduce<Record<string, number>>((acc, node) => {
-          acc[node.type] = (acc[node.type] || 0) + 1;
-          return acc;
-        }, {});
-
-        const offsets: Record<string, number> = {
-          candidate: 0,
-          skill: 0,
-          company: 0,
-          institution: 0,
-          project: 0,
-        };
-
-        const initializedNodes = data.nodes.map((n) => {
-          const layout = categoryLayout[n.type] ?? categoryLayout.skill;
-          const sectorSize = layout.end - layout.start;
-          const indexInGroup = offsets[n.type] || 0;
-          const groupCount = Math.max(1, typeCounts[n.type] || 1);
-          const angle = layout.start + (indexInGroup / groupCount) * sectorSize + (Math.random() - 0.5) * 0.14;
-          offsets[n.type] = indexInGroup + 1;
-          const radius = layout.radius + (Math.random() * 40 - 20);
-
-          return {
-            ...n,
-            x: n.type === 'candidate' && n.id === targetCandidateId ? 0 : Math.cos(angle) * radius,
-            y: n.type === 'candidate' && n.id === targetCandidateId ? 0 : Math.sin(angle) * radius,
-            vx: 0,
-            vy: 0,
-            fx: null,
-            fy: null
-          };
-        });
+        const data = await resumeService.getCandidateGraph(
+          targetCandidateId,
+          0,
+          GRAPH_PAGE_SIZE,
+        );
+        const initializedNodes = layoutGraphNodes(data.nodes, [], targetCandidateId);
 
         nodesRef.current = initializedNodes;
         linksRef.current = data.links;
+        const candidateCount = initializedNodes.filter((node) => node.type === 'candidate').length;
+        setGraphTotal(data.total ?? candidateCount);
+        setNextGraphSkip((data.skip ?? 0) + (data.limit ?? GRAPH_PAGE_SIZE));
         
         setNodes(initializedNodes);
         setLinks(data.links);
@@ -144,6 +178,7 @@ export const RelationshipExplorer: React.FC = () => {
         }
       } catch (err) {
         console.error('Failed to load graph data', err);
+        setGraphError('Unable to load current Neo4j graph data.');
       } finally {
         setLoading(false);
       }
@@ -151,15 +186,60 @@ export const RelationshipExplorer: React.FC = () => {
     loadGraph();
   }, [targetCandidateId]);
 
+  const loadMoreCandidates = async () => {
+    if (loadingMore || nextGraphSkip >= graphTotal) return;
+    setLoadingMore(true);
+    setGraphError(null);
+    try {
+      const data = await resumeService.getCandidateGraph(
+        'global',
+        nextGraphSkip,
+        GRAPH_PAGE_SIZE,
+      );
+      const knownIds = new Set(nodesRef.current.map((node) => node.id));
+      const newNodes = data.nodes.filter((node) => !knownIds.has(node.id));
+      const laidOutNodes = layoutGraphNodes(
+        newNodes,
+        nodesRef.current,
+        'global',
+      );
+      const combinedNodes = [...nodesRef.current, ...laidOutNodes];
+      const combinedLinks = new Map(
+        linksRef.current.map((link) => [
+          link.id ?? `${link.source}|${link.target}|${link.type}`,
+          link,
+        ]),
+      );
+      data.links.forEach((link) => {
+        combinedLinks.set(link.id ?? `${link.source}|${link.target}|${link.type}`, link);
+      });
+      nodesRef.current = combinedNodes;
+      linksRef.current = [...combinedLinks.values()];
+      setNodes(combinedNodes);
+      setLinks(linksRef.current);
+      setSimulationRun((run) => run + 1);
+      setNextGraphSkip(nextGraphSkip + (data.limit ?? GRAPH_PAGE_SIZE));
+      setGraphTotal(data.total ?? graphTotal);
+    } catch (err) {
+      console.error('Failed to load the next graph page', err);
+      setGraphError('Unable to load more graph records. Please retry.');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   // physics loop simulation logic
   useEffect(() => {
     if (loading || nodesRef.current.length === 0) return;
 
     let animFrameId: number;
+    let frame = 0;
+    const maxFrames = 120;
 
     const tick = () => {
       const currentNodes = [...nodesRef.current];
       const currentLinks = linksRef.current;
+      const nodeById = new Map(currentNodes.map((node) => [node.id, node]));
 
       const center = { x: 0, y: 0 };
       const nodeCount = currentNodes.length;
@@ -172,10 +252,7 @@ export const RelationshipExplorer: React.FC = () => {
       // 1. Calculate Repulsion forces (push all nodes away from each other)
       for (let i = 0; i < currentNodes.length; i++) {
         const n1 = currentNodes[i];
-        if (n1.id === draggedNodeId) continue;
-
-        for (let j = 0; j < currentNodes.length; j++) {
-          if (i === j) continue;
+        for (let j = i + 1; j < currentNodes.length; j++) {
           const n2 = currentNodes[j];
 
           const dx = (n1.x || 0) - (n2.x || 0);
@@ -185,16 +262,24 @@ export const RelationshipExplorer: React.FC = () => {
 
           if (dist < 320) { // Limit repulsion radius
             const force = repulsionStrength / distSq;
-            n1.vx = (n1.vx || 0) + (dx / dist) * force;
-            n1.vy = (n1.vy || 0) + (dy / dist) * force;
+            const forceX = (dx / dist) * force;
+            const forceY = (dy / dist) * force;
+            if (n1.id !== draggedNodeId) {
+              n1.vx = (n1.vx || 0) + forceX;
+              n1.vy = (n1.vy || 0) + forceY;
+            }
+            if (n2.id !== draggedNodeId) {
+              n2.vx = (n2.vx || 0) - forceX;
+              n2.vy = (n2.vy || 0) - forceY;
+            }
           }
         }
       }
 
       // 2. Calculate Attraction forces (pull linked nodes together)
       currentLinks.forEach(link => {
-        const sourceNode = currentNodes.find(n => n.id === (typeof link.source === 'object' ? (link.source as any).id : link.source));
-        const targetNode = currentNodes.find(n => n.id === (typeof link.target === 'object' ? (link.target as any).id : link.target));
+        const sourceNode = nodeById.get(getGraphEndpointId(link.source));
+        const targetNode = nodeById.get(getGraphEndpointId(link.target));
 
         if (!sourceNode || !targetNode) return;
 
@@ -234,14 +319,19 @@ export const RelationshipExplorer: React.FC = () => {
       });
 
       nodesRef.current = currentNodes;
-      setNodes([...currentNodes]);
+      frame += 1;
+      if (frame % 2 === 0 || frame >= maxFrames) {
+        setNodes(currentNodes);
+      }
 
-      animFrameId = requestAnimationFrame(tick);
+      if (frame < maxFrames) {
+        animFrameId = requestAnimationFrame(tick);
+      }
     };
 
     animFrameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animFrameId);
-  }, [loading, draggedNodeId]);
+  }, [loading, draggedNodeId, simulationRun]);
 
   // Recenter helper
   const handleRecenter = () => {
@@ -310,6 +400,8 @@ export const RelationshipExplorer: React.FC = () => {
       case 'company': return '#38bdf8';   // cyan/technology
       case 'institution': return '#f59e0b'; // amber
       case 'project': return '#ec4899';   // fuchsia
+      case 'job': return '#f97316';
+      case 'application': return '#14b8a6';
       default: return '#9ca3af';
     }
   };
@@ -321,6 +413,8 @@ export const RelationshipExplorer: React.FC = () => {
       company: 18,
       institution: 18,
       project: 20,
+      job: 22,
+      application: 18,
     }[node.type] ?? 16;
 
     return Math.max(base, Math.min(40, Math.sqrt(node.val || 0) * 3 + 8));
@@ -330,6 +424,8 @@ export const RelationshipExplorer: React.FC = () => {
     switch (type) {
       case 'candidate': return <User size={12} />;
       case 'company': return <Briefcase size={12} />;
+      case 'job': return <Briefcase size={12} />;
+      case 'application': return <Info size={12} />;
       case 'institution': return <GraduationCap size={12} />;
       case 'skill': return <Cpu size={12} />;
       default: return <GitFork size={12} />;
@@ -356,8 +452,8 @@ export const RelationshipExplorer: React.FC = () => {
 
   const visibleLinks = useMemo(() => {
     return links.filter(link => {
-      const srcId = typeof link.source === 'object' ? (link.source as any).id : link.source;
-      const tgtId = typeof link.target === 'object' ? (link.target as any).id : link.target;
+      const srcId = getGraphEndpointId(link.source);
+      const tgtId = getGraphEndpointId(link.target);
       return visibleNodes.some(n => n.id === srcId) && visibleNodes.some(n => n.id === tgtId);
     });
   }, [links, visibleNodes]);
@@ -367,14 +463,14 @@ export const RelationshipExplorer: React.FC = () => {
     if (!selectedNode) return null;
 
     const connectedLinks = links.filter(link => {
-      const srcId = typeof link.source === 'object' ? (link.source as any).id : link.source;
-      const tgtId = typeof link.target === 'object' ? (link.target as any).id : link.target;
+      const srcId = getGraphEndpointId(link.source);
+      const tgtId = getGraphEndpointId(link.target);
       return srcId === selectedNode.id || tgtId === selectedNode.id;
     });
 
     const targetNodes = connectedLinks.map(link => {
-      const srcId = typeof link.source === 'object' ? (link.source as any).id : link.source;
-      const tgtId = typeof link.target === 'object' ? (link.target as any).id : link.target;
+      const srcId = getGraphEndpointId(link.source);
+      const tgtId = getGraphEndpointId(link.target);
       const oppositeId = srcId === selectedNode.id ? tgtId : srcId;
       return nodes.find(n => n.id === oppositeId);
     }).filter(Boolean) as GraphNode[];
@@ -417,7 +513,7 @@ export const RelationshipExplorer: React.FC = () => {
             >
               <span 
                 className="inline-block w-1.5 h-1.5 rounded-full mr-1.5"
-                style={{ backgroundColor: enabled ? getNodeColor(type as any) : '#4b5563' }}
+                style={{ backgroundColor: enabled ? getNodeColor(type as GraphNode['type']) : '#4b5563' }}
               />
               {type}s
             </button>
@@ -450,6 +546,27 @@ export const RelationshipExplorer: React.FC = () => {
         </div>
 
       </section>
+
+      {targetCandidateId === 'global' && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+          <span className="text-slate-400">
+            Showing {nodes.filter((node) => node.type === 'candidate').length} of {graphTotal} candidates
+          </span>
+          {nextGraphSkip < graphTotal && (
+            <button
+              type="button"
+              onClick={() => void loadMoreCandidates()}
+              disabled={loadingMore}
+              className="px-3 py-2 rounded-lg border border-dark-border bg-slate-900 text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+            >
+              {loadingMore ? 'Loading...' : `Load next ${GRAPH_PAGE_SIZE} candidates`}
+            </button>
+          )}
+        </div>
+      )}
+      {graphError && (
+        <p role="alert" className="text-sm text-rose-400">{graphError}</p>
+      )}
 
       {/* GRAPH EXPLORER WORKSPACE AND SIDEBAR PANEL */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1 items-stretch">
@@ -488,8 +605,8 @@ export const RelationshipExplorer: React.FC = () => {
                 
                 {/* DRAW LINKS */}
                 {visibleLinks.map((link, idx) => {
-                  const sourceNode = nodes.find(n => n.id === (typeof link.source === 'object' ? (link.source as any).id : link.source));
-                  const targetNode = nodes.find(n => n.id === (typeof link.target === 'object' ? (link.target as any).id : link.target));
+                  const sourceNode = nodes.find(n => n.id === getGraphEndpointId(link.source));
+                  const targetNode = nodes.find(n => n.id === getGraphEndpointId(link.target));
 
                   if (!sourceNode || !targetNode) return null;
 

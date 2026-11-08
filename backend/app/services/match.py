@@ -2,149 +2,164 @@ import logging
 
 from app.core.exceptions import NotFoundError
 from app.db.neo4j import Neo4jConnection
-from app.models.candidate import Candidate
-from app.models.job import Job
+from app.db.nodes import JobNode
 from app.schemas.match import JobMatchResponse, MatchedCandidate
-from app.db.nodes.candidate import CandidateNode
 from app.services.ai_match_explanation import AIMatchExplanationService
-# from backend.app.api.v1.endpoints import candidates
+from app.services.query_parser import QueryParser
+from app.services.ranking import RankingService
+from app.services.search import SearchService
 
 logger = logging.getLogger(__name__)
 
 
 class MatchService:
-    """Service responsible for matching candidates with jobs."""
+    """Rank the existing candidate graph against a saved job."""
 
-    def __init__(self, neo4j: Neo4jConnection, ai_explanation_service: AIMatchExplanationService,) -> None:
+    def __init__(
+        self,
+        neo4j: Neo4jConnection,
+        ai_explanation_service: AIMatchExplanationService,
+    ) -> None:
         self.neo4j = neo4j
         self.ai_explanation_service = ai_explanation_service
+        self.search_service = SearchService(neo4j)
+        self.ranking_service = RankingService()
+        self.query_parser = QueryParser()
 
-    async def match_candidates(self, job_id: str) -> JobMatchResponse:
-        """
-        Match all candidates against the given job and
-        return them sorted by match score.
-        """
-        from app.db.nodes import JobNode, CandidateNode
-        
-        # Fetch the job by ID
-        job_query = """
-        MATCH (j:Job {id: $job_id})
-        RETURN j
-        """
-        job_records = await self.neo4j.execute_read(job_query, {"job_id": job_id})
+    async def match_candidates(
+        self,
+        job_id: str,
+        *,
+        skip: int = 0,
+        generate_explanations: bool = True,
+    ) -> JobMatchResponse:
+        job_records = await self.neo4j.execute_read(
+            "MATCH (j:Job {id: $job_id}) RETURN j",
+            {"job_id": job_id},
+        )
         if not job_records:
             raise NotFoundError(f"Job {job_id} not found")
-        
+
         job = JobNode.from_neo4j(job_records[0]["j"]).to_domain()
-        
-        # Fetch all candidates
-        candidates_query = """
-         MATCH (c:Candidate)
-         
-         OPTIONAL MATCH (c)-[:HAS_SKILL]->(s:Skill)
-         OPTIONAL MATCH (c)-[:USES_TECHNOLOGY]->(t:Technology)
-         
-         RETURN
-             c,
-             collect(DISTINCT s.name) AS skills,
-             collect(DISTINCT t.name) AS technologies
-         """
-        
-        candidate_records = await self.neo4j.execute_read(candidates_query)
-        
-        candidates = []
-        
-        for record in candidate_records:
-         candidate = CandidateNode.from_neo4j(
-             record["c"]
-         ).to_domain()
-     
-         candidate.skills = record["skills"] or []
-     
-         candidates.append(candidate)
-        
-        # Calculate match score for each candidate and sort by score descending
-        matched_candidates = []
+        query_text = " ".join(
+            [
+                job.title,
+                job.description,
+                *job.required_skills,
+                f"{job.experience} years experience",
+            ]
+        )
+        query = self.query_parser.parse(query_text, limit=100)
+        query.skills = list(dict.fromkeys([*job.required_skills, *query.skills]))
+        candidates = await self.search_service.search(
+            query,
+            include_nonmatching=True,
+            skip=skip,
+        )
+
         for candidate in candidates:
-            matched = self.calculate_match_score(job, candidate)
-            try:
-                recommendation = self.get_match_recommendation(
-                matched.match_score
-            )
-            
-                matched.ai_explanation = await self.ai_explanation_service.generate_explanation(
-                job_title=job.title,
-                matched_skills=matched.matched_skills,
-                missing_skills=matched.missing_skills,
-                match_score=matched.match_score,
-                recommendation=recommendation,
-            )
-                print("AI Explanation:", matched.ai_explanation)
-            except Exception:
-                logger.exception("Failed to generate AI match explanation")
-                matched.ai_explanation = "Unable to generate AI explanation at this time."
+            available_skills = {
+                str(skill).casefold()
+                for skill in [
+                    *candidate.get("skills", []),
+                    *candidate.get("technologies", []),
+                ]
+            }
+            candidate["matched_skills"] = [
+                skill for skill in job.required_skills
+                if skill.casefold() in available_skills
+            ]
+            candidate["missing_skills"] = [
+                skill for skill in job.required_skills
+                if skill.casefold() not in available_skills
+            ]
+            projects = [
+                str(project)
+                for project in candidate.get("projects", [])
+                if project
+            ]
+            candidate["matched_projects"] = [
+                project
+                for project in query.projects
+                if any(project.casefold() in item.casefold() for item in projects)
+            ]
+            candidate["missing_projects"] = [
+                project
+                for project in query.projects
+                if project not in candidate["matched_projects"]
+            ]
 
-            matched_candidates.append(matched)
+        ranked = self.ranking_service.rank(candidates, query)
+        candidates_by_id = {
+            candidate["candidate_id"]: candidate for candidate in candidates
+        }
+        matches = []
+        for item in ranked:
+            candidate = candidates_by_id[item.candidate_id]
+            experience_years = candidate.get("experience_years")
+            explanation_parts = [
+                (
+                    "Matched skills: " + ", ".join(candidate["matched_skills"])
+                    if candidate["matched_skills"]
+                    else "No required skills matched"
+                ),
+                (
+                    f"Experience: {experience_years or 0:g} years "
+                    f"(required {job.experience}+)"
+                ),
+            ]
+            if query.projects:
+                explanation_parts.append(
+                    "Matched projects: "
+                    + (", ".join(candidate["matched_projects"]) or "none")
+                )
+            explanation = ". ".join(explanation_parts)
+            match_score = item.score * 100
+            ai_explanation = None
+            if generate_explanations:
+                try:
+                    ai_explanation = await self.ai_explanation_service.generate_explanation(
+                        job_title=job.title,
+                        matched_skills=candidate["matched_skills"],
+                        missing_skills=candidate["missing_skills"],
+                        match_score=match_score,
+                        recommendation=self.get_match_recommendation(match_score),
+                    )
+                except Exception:
+                    logger.exception("Failed to generate AI match explanation")
 
-        matched_candidates.sort(key=lambda m: m.match_score, reverse=True)
-        
+            matches.append(
+                MatchedCandidate(
+                    candidate_id=item.candidate_id,
+                    full_name=item.full_name,
+                    match_score=match_score,
+                    matched_skills=candidate["matched_skills"],
+                    missing_skills=candidate["missing_skills"],
+                    matched_projects=candidate["matched_projects"],
+                    missing_projects=candidate["missing_projects"],
+                    experience=round(experience_years or 0),
+                    experience_years=experience_years,
+                    summary=item.summary,
+                    ai_explanation=ai_explanation,
+                    explanation=explanation,
+                )
+            )
+
         return JobMatchResponse(
             job_id=job_id,
             total_candidates=len(candidates),
-            matched_candidates=matched_candidates,
-        )
-
-    def calculate_match_score(
-        self,
-        job: Job,
-        candidate: Candidate,
-    ) -> MatchedCandidate:
-        """
-        Calculate the match score for one candidate.
-        """
-        # Normalize skills to lowercase for case-insensitive comparison
-        required_skills_lower = {skill.lower() for skill in job.required_skills}
-        print("Job Skills:", job.required_skills)
-        print("Candidate Skills:", candidate.skills)
-        candidate_skills_lower = {skill.lower() for skill in candidate.skills}
-        
-        # Find matched and missing skills
-        matched_skills = required_skills_lower & candidate_skills_lower
-        missing_skills = required_skills_lower - candidate_skills_lower
-        
-        # Calculate match score
-        total_required = len(job.required_skills)
-        match_score = (len(matched_skills) / total_required * 100) if total_required > 0 else 0.0
-        
-        # Return matched candidate with original case preserved
-        matched_skills_list = [
-            skill for skill in candidate.skills 
-            if skill.lower() in matched_skills
-        ]
-        missing_skills_list = list(missing_skills)
-        
-        return MatchedCandidate(
-            candidate_id=candidate.id,
-            full_name=candidate.full_name,
-            match_score=match_score,
-            matched_skills=matched_skills_list,
-            missing_skills=missing_skills_list,
-            experience=job.experience,
-            summary=candidate.summary,
+            matched_candidates=matches,
         )
 
     async def get_matches(self, job_id: str) -> JobMatchResponse:
-        """
-        Return previously generated matches for a job.
-        """
-        raise NotImplementedError
+        return await self.match_candidates(job_id)
 
-    def get_match_recommendation(self, match_score: float) -> str:
-     if match_score >= 90:
-        return "Strong Match"
-     elif match_score >= 70:
-         return "Good Match"
-     elif match_score >= 50:
-         return "Moderate Match"
-     else:
-         return "Weak Match"
+    @staticmethod
+    def get_match_recommendation(match_score: float) -> str:
+        if match_score >= 90:
+            return "Strong Match"
+        if match_score >= 70:
+            return "Good Match"
+        if match_score >= 50:
+            return "Moderate Match"
+        return "Weak Match"

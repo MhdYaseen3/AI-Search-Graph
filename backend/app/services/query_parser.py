@@ -42,6 +42,19 @@ class QueryParser:
         "smart housing",
     }
 
+    EDUCATION_KEYWORDS = {
+        "computer science",
+        "software engineering",
+        "data science",
+        "electrical engineering",
+        "computer engineering",
+        "information technology",
+        "mathematics",
+        "statistics",
+        "machine learning",
+        "artificial intelligence",
+    }
+
     ROLES = {
         "backend developer": ["backend developer", "backend engineer"],
         "frontend developer": ["frontend developer", "frontend engineer"],
@@ -68,6 +81,8 @@ class QueryParser:
 
         projects = self._find_projects(text_lower)
 
+        education = self._find_education(text_lower)
+
         min_experience_years = self._find_min_experience_years(
             text_lower
         )
@@ -78,6 +93,7 @@ class QueryParser:
             skills=normalize_entities(skills),
             technologies=normalize_entities(technologies),
             projects=normalize_entities(projects),
+            education=normalize_entities(education),
             min_experience_years=min_experience_years,
             limit=limit,
         )
@@ -104,6 +120,17 @@ class QueryParser:
         for project in self.PROJECT_KEYWORDS:
             if project in text:
                 matches.append(project)
+
+        return matches
+
+    def _find_education(self, text: str) -> list[str]:
+        """Find education keywords mentioned in the query."""
+
+        matches = []
+
+        for edu in self.EDUCATION_KEYWORDS:
+            if edu in text:
+                matches.append(edu)
 
         return matches
 

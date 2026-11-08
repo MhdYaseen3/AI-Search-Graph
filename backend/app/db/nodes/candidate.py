@@ -21,6 +21,7 @@ class CandidateNode(GraphNode):
     summary: str | None = None
     resume_file_path: str | None = None
     raw_text: str | None = None
+    source: str | None = None
     skills: list[str] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -51,6 +52,7 @@ class CandidateNode(GraphNode):
             summary=props.get("summary"),
             resume_file_path=props.get("resume_file_path"),
             raw_text=props.get("raw_text"),
+            source=props.get("source"),
             skills=skills,
             created_at=_parse_neo4j_datetime(props.get("created_at")),
             updated_at=_parse_neo4j_datetime(props.get("updated_at")),
@@ -66,6 +68,7 @@ class CandidateNode(GraphNode):
             "summary": self.summary,
             "resume_file_path": self.resume_file_path,
             "raw_text": self.raw_text,
+            "source": self.source,
             "skills": self.skills,
             "created_at": _serialize_datetime(self.created_at),
             "updated_at": _serialize_datetime(self.updated_at),

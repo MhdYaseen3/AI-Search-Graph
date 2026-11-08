@@ -109,6 +109,28 @@ async def get_neo4j_session() -> AsyncGenerator[Neo4jConnection, None]:
     yield connection
 
 
+def get_resume_ingest_service(
+    neo4j: Neo4jDep,
+    upload_service: ResumeUploadService = Depends(get_resume_upload_service),
+    pdf_service: PDFExtractionService = Depends(get_pdf_extraction_service),
+    candidate_service: CandidateManagementService = Depends(get_candidate_service),
+    skill_service: SkillExtractionService = Depends(get_skill_extraction_service),
+    project_service: ProjectExtractionService = Depends(get_project_extraction_service),
+    education_service: EducationExtractionService = Depends(get_education_extraction_service),
+    technology_service: TechnologyExtractionService = Depends(get_technology_extraction_service),
+) -> ResumeIngestService:
+    return ResumeIngestService(
+        upload_service=upload_service,
+        pdf_service=pdf_service,
+        candidate_service=candidate_service,
+        graph_service=Neo4jGraphService(neo4j),
+        skill_service=skill_service,
+        project_service=project_service,
+        education_service=education_service,
+        technology_service=technology_service,
+    )
+
+
 def get_gmail_ingestion_service(
     candidate_service: CandidateManagementService = Depends(
         get_candidate_service
@@ -134,6 +156,7 @@ def get_gmail_ingestion_service(
     message_tracking_service: GmailMessageTrackingService = Depends(
         get_gmail_message_tracking_service
     ),
+    ingest_service: ResumeIngestService = Depends(get_resume_ingest_service),
 ) -> GmailIngestionService:
     return GmailIngestionService(
         candidate_service=candidate_service,
@@ -144,29 +167,8 @@ def get_gmail_ingestion_service(
         technology_service=technology_service,
         graph_service=graph_service,
         message_tracking_service=message_tracking_service,
+        ingest_service=ingest_service,
     )
 
 def get_query_parser() -> QueryParser:
     return QueryParser()
-
-
-def get_resume_ingest_service(
-    neo4j: Neo4jDep,
-    upload_service: ResumeUploadService = Depends(get_resume_upload_service),
-    pdf_service: PDFExtractionService = Depends(get_pdf_extraction_service),
-    candidate_service: CandidateManagementService = Depends(get_candidate_service),
-    skill_service: SkillExtractionService = Depends(get_skill_extraction_service),
-    project_service: ProjectExtractionService = Depends(get_project_extraction_service),
-    education_service: EducationExtractionService = Depends(get_education_extraction_service),
-    technology_service: TechnologyExtractionService = Depends(get_technology_extraction_service),
-) -> ResumeIngestService:
-    return ResumeIngestService(
-        upload_service=upload_service,
-        pdf_service=pdf_service,
-        candidate_service=candidate_service,
-        graph_service=Neo4jGraphService(neo4j),
-        skill_service=skill_service,
-        project_service=project_service,
-        education_service=education_service,
-        technology_service=technology_service,
-    )

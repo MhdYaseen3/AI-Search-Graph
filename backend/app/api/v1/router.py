@@ -8,6 +8,7 @@ from app.api.v1.endpoints import (
     search,
     match,
     gmail,
+    dashboard,
 )
 
 
@@ -20,3 +21,4 @@ api_router.include_router(resumes.router)
 api_router.include_router(search.router)
 api_router.include_router(match.router)
 api_router.include_router(gmail.router)
+api_router.include_router(dashboard.router)

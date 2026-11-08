@@ -6,14 +6,16 @@ interface CreateJobFormProps {
   onSubmit: (input: CreateJobInput) => Promise<void>;
   isSubmitting?: boolean;
   onCancel?: () => void;
+  initialValue?: CreateJobInput;
 }
 
 export const CreateJobForm: React.FC<CreateJobFormProps> = ({
   onSubmit,
   isSubmitting = false,
-  onCancel
+  onCancel,
+  initialValue,
 }) => {
-  const [formData, setFormData] = useState<CreateJobInput>({
+  const [formData, setFormData] = useState<CreateJobInput>(() => initialValue || {
     title: '',
     description: '',
     requiredSkills: [],
@@ -23,9 +25,9 @@ export const CreateJobForm: React.FC<CreateJobFormProps> = ({
     salary: {
       min: undefined,
       max: undefined,
-      currency: 'USD'
+      currency: 'USD',
     },
-    status: 'Active' as JobStatus
+    status: 'Active' as JobStatus,
   });
 
   const [skillInput, setSkillInput] = useState('');
@@ -127,8 +129,12 @@ export const CreateJobForm: React.FC<CreateJobFormProps> = ({
 
     try {
       await onSubmit(formData);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to create job. Please try again.');
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Failed to save job. Please try again.',
+      );
     }
   };
 
